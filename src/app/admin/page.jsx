@@ -141,6 +141,13 @@ function AdminDashboard() {
   const [pricingError, setPricingError] = useState("");
   const [pricingSaving, setPricingSaving] = useState(false);
 
+  const [serviceStart, setServiceStart] = useState("06:00");
+  const [serviceEnd, setServiceEnd] = useState("23:00");
+  const [closedMessage, setClosedMessage] = useState("");
+  const [availability, setAvailability] = useState({ chai: true, bun: true });
+  const [settingsError, setSettingsError] = useState("");
+  const [settingsSaving, setSettingsSaving] = useState(false);
+
   const [clearing, setClearing] = useState(false);
 
   const loadQueueTickets = useCallback(
@@ -237,6 +244,29 @@ function AdminDashboard() {
     loadPricing();
   }, []);
 
+  useEffect(() => {
+    async function loadSettings() {
+      try {
+        const res = await fetch("/api/settings");
+        const json = await res.json();
+        if (!res.ok) {
+          setSettingsError(json.error || "Failed to load settings");
+          return;
+        }
+        setServiceStart(json.serviceStart || "06:00");
+        setServiceEnd(json.serviceEnd || "23:00");
+        setClosedMessage(json.closedMessage || "");
+        setAvailability({
+          chai: json.availability?.chai ?? true,
+          bun: json.availability?.bun ?? true,
+        });
+      } catch {
+        setSettingsError("Failed to load settings");
+      }
+    }
+    loadSettings();
+  }, []);
+
   async function updateStatus(id, dateKey, status) {
     try {
       const res = await fetch("/api/ready", {
@@ -295,6 +325,48 @@ function AdminDashboard() {
     }
   }
 
+  async function saveSettings(event) {
+    event.preventDefault();
+    setSettingsError("");
+    setSettingsSaving(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          serviceStart,
+          serviceEnd,
+          closedMessage,
+          availability,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setSettingsError(json.error || "Failed to save settings");
+        setSettingsSaving(false);
+        return;
+      }
+      setServiceStart(json.serviceStart || "06:00");
+      setServiceEnd(json.serviceEnd || "23:00");
+      setClosedMessage(json.closedMessage || "");
+      setAvailability({
+        chai: json.availability?.chai ?? true,
+        bun: json.availability?.bun ?? true,
+      });
+      setSettingsSaving(false);
+    } catch {
+      setSettingsError("Failed to save settings");
+      setSettingsSaving(false);
+    }
+  }
+
+  function toggleAvailability(item) {
+    setAvailability((prev) => ({
+      ...prev,
+      [item]: !prev[item],
+    }));
+  }
+
   const queueTicketsWaiting = useMemo(
     () =>
       queueTickets
@@ -318,12 +390,14 @@ function AdminDashboard() {
     readyTickets.forEach((ticket) => {
       ticket.items?.forEach((item) => {
         if (!item.qty) return;
-        const price =
-          item.name === "Irani Chai" ? Number(chaiPrice) || 0 : Number(bunPrice) || 0;
         if (item.name === "Irani Chai") chaiCount += item.qty;
         if (item.name === "Bun") bunCount += item.qty;
-        revenue += price * item.qty;
       });
+      revenue += ticketTotal(
+        ticket,
+        Number(chaiPrice) || 0,
+        Number(bunPrice) || 0
+      );
     });
     return { chaiCount, bunCount, revenue };
   }, [readyTickets, chaiPrice, bunPrice]);
@@ -349,12 +423,15 @@ function AdminDashboard() {
         </div>
 
         <Tabs value={tab} onValueChange={setTab} className="space-y-6">
-          <TabsList className="w-full max-w-md">
+          <TabsList className="w-full max-w-2xl">
             <TabsTrigger value="queue" className="w-full">
               Queue
             </TabsTrigger>
             <TabsTrigger value="dashboard" className="w-full">
-              Serve dashboard
+              Served dashboard
+            </TabsTrigger>
+            <TabsTrigger value="settings" className="w-full">
+              Settings
             </TabsTrigger>
           </TabsList>
 
@@ -452,42 +529,6 @@ function AdminDashboard() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-6">
-                <form
-                  onSubmit={savePricing}
-                  className="grid gap-4 rounded-2xl border bg-card p-4 md:grid-cols-3"
-                >
-                  <div className="space-y-2">
-                    <Label htmlFor="chaiPrice">Irani Chai price</Label>
-                    <Input
-                      id="chaiPrice"
-                      type="number"
-                      min={0}
-                      value={chaiPrice}
-                      onChange={(e) => setChaiPrice(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="bunPrice">Bun price</Label>
-                    <Input
-                      id="bunPrice"
-                      type="number"
-                      min={0}
-                      value={bunPrice}
-                      onChange={(e) => setBunPrice(e.target.value)}
-                    />
-                  </div>
-                  <div className="flex flex-col justify-end gap-2">
-                    {pricingError && (
-                      <Alert variant="destructive">
-                        <AlertDescription>{pricingError}</AlertDescription>
-                      </Alert>
-                    )}
-                    <Button type="submit" disabled={pricingSaving}>
-                      {pricingSaving ? "Saving..." : "Save prices"}
-                    </Button>
-                  </div>
-                </form>
-
                 <div className="grid gap-4 md:grid-cols-3">
                   <SummaryCard label="Ready chai" value={readySummary.chaiCount} />
                   <SummaryCard label="Ready buns" value={readySummary.bunCount} />
@@ -540,6 +581,129 @@ function AdminDashboard() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          <TabsContent value="settings" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Service window & availability</CardTitle>
+                <CardDescription>
+                  Control when the queue opens and what items are on the menu.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={saveSettings} className="grid gap-6 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="serviceStart">Service start</Label>
+                    <Input
+                      id="serviceStart"
+                      type="time"
+                      value={serviceStart}
+                      onChange={(e) => setServiceStart(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="serviceEnd">Service end</Label>
+                    <Input
+                      id="serviceEnd"
+                      type="time"
+                      value={serviceEnd}
+                      onChange={(e) => setServiceEnd(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="md:col-span-2 space-y-2">
+                    <Label htmlFor="closedMessage">Closed caption</Label>
+                    <Input
+                      id="closedMessage"
+                      value={closedMessage}
+                      onChange={(e) => setClosedMessage(e.target.value)}
+                      placeholder="We pour chai daily between 6am – 11pm."
+                    />
+                  </div>
+                  <div className="md:col-span-2 space-y-3">
+                    <Label>Availability</Label>
+                    <div className="flex flex-wrap gap-3">
+                      <Button
+                        type="button"
+                        variant={availability.chai ? "secondary" : "outline"}
+                        className="flex-1 sm:flex-none"
+                        onClick={() => toggleAvailability("chai")}
+                      >
+                        Irani Chai — {availability.chai ? "Available" : "Sold out"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={availability.bun ? "secondary" : "outline"}
+                        className="flex-1 sm:flex-none"
+                        onClick={() => toggleAvailability("bun")}
+                      >
+                        Bun Maska — {availability.bun ? "Available" : "Sold out"}
+                      </Button>
+                    </div>
+                  </div>
+                  {settingsError && (
+                    <div className="md:col-span-2">
+                      <Alert variant="destructive">
+                        <AlertDescription>{settingsError}</AlertDescription>
+                      </Alert>
+                    </div>
+                  )}
+                  <div className="md:col-span-2">
+                    <Button type="submit" disabled={settingsSaving}>
+                      {settingsSaving ? "Saving..." : "Save service settings"}
+                    </Button>
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Pricing</CardTitle>
+                <CardDescription>
+                  Set the prices for Irani Chai and Bun Maska.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form
+                  onSubmit={savePricing}
+                  className="grid gap-4 md:grid-cols-3"
+                >
+                  <div className="space-y-2">
+                    <Label htmlFor="chaiPrice">Irani Chai price</Label>
+                    <Input
+                      id="chaiPrice"
+                      type="number"
+                      min={0}
+                      value={chaiPrice}
+                      onChange={(e) => setChaiPrice(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="bunPrice">Bun price</Label>
+                    <Input
+                      id="bunPrice"
+                      type="number"
+                      min={0}
+                      value={bunPrice}
+                      onChange={(e) => setBunPrice(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex flex-col justify-end gap-2">
+                    {pricingError && (
+                      <Alert variant="destructive">
+                        <AlertDescription>{pricingError}</AlertDescription>
+                      </Alert>
+                    )}
+                    <Button type="submit" disabled={pricingSaving}>
+                      {pricingSaving ? "Saving..." : "Save prices"}
+                    </Button>
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
       </div>
     </main>
@@ -575,10 +739,13 @@ function formatOrder(items) {
   return filtered.map((item) => `${item.name} × ${item.qty}`).join(", ");
 }
 
-function ticketTotal(ticket, chaiPriceValue, bunPriceValue) {
+function ticketTotal(ticket, fallbackChai = 0, fallbackBun = 0) {
+  if (typeof ticket.total === "number") {
+    return ticket.total;
+  }
   if (!Array.isArray(ticket.items)) return 0;
   return ticket.items.reduce((sum, item) => {
-    const price = item.name === "Irani Chai" ? chaiPriceValue : bunPriceValue;
+    const price = item.name === "Irani Chai" ? fallbackChai : fallbackBun;
     return sum + (price || 0) * (item.qty || 0);
   }, 0);
 }

@@ -1,7 +1,19 @@
 import { NextResponse } from "next/server";
 import { db, getTodayKey, firestoreHelpers } from "@/lib/firebase";
 
-const { doc, collection, query, orderBy, onSnapshot } = firestoreHelpers;
+const { doc, collection, query, orderBy, onSnapshot, getDoc } = firestoreHelpers;
+
+const DEFAULT_SETTINGS = {
+  serviceStart: "06:00",
+  serviceEnd: "23:00",
+  closedMessage: "Queue is currently closed. Please check back during service hours.",
+  availability: {
+    chai: true,
+    bun: true,
+  },
+};
+
+const SETTINGS_DOC = doc(db, "config", "app-settings");
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -15,18 +27,35 @@ export async function GET(request) {
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
-    start(controller) {
-      const unsubscribe = onSnapshot(
+    async start(controller) {
+      let settings = DEFAULT_SETTINGS;
+      try {
+        const settingsSnap = await getDoc(SETTINGS_DOC);
+        if (settingsSnap.exists()) {
+          settings = { ...DEFAULT_SETTINGS, ...settingsSnap.data() };
+        }
+      } catch {
+        // use defaults
+      }
+
+      let currentTickets = [];
+
+      const sendUpdate = (tickets) => {
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({ dateKey: requestedDate, tickets, settings })}\n\n`
+          )
+        );
+      };
+
+      const unsubscribeTickets = onSnapshot(
         ticketsQuery,
         (snapshot) => {
-          const tickets = snapshot.docs.map((doc) => ({
+          currentTickets = snapshot.docs.map((doc) => ({
             id: doc.id,
             ...doc.data(),
           }));
-
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ dateKey: requestedDate, tickets })}\n\n`)
-          );
+          sendUpdate(currentTickets);
         },
         (error) => {
           controller.enqueue(
@@ -37,8 +66,22 @@ export async function GET(request) {
         }
       );
 
+      const unsubscribeSettings = onSnapshot(
+        SETTINGS_DOC,
+        (snapshot) => {
+          if (snapshot.exists()) {
+            settings = { ...DEFAULT_SETTINGS, ...snapshot.data() };
+            sendUpdate(currentTickets);
+          }
+        },
+        () => {
+          // ignore settings errors
+        }
+      );
+
       const close = () => {
-        unsubscribe();
+        unsubscribeTickets();
+        unsubscribeSettings();
         controller.close();
       };
 

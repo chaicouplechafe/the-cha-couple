@@ -39,6 +39,9 @@ export default function QueuePage() {
   const [pricing, setPricing] = useState({ chaiPrice: 0, bunPrice: 0 });
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [settings, setSettings] = useState(null);
+  const [settingsError, setSettingsError] = useState("");
+  const [settingsLoading, setSettingsLoading] = useState(true);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -87,6 +90,39 @@ export default function QueuePage() {
     };
   }, []);
 
+  useEffect(() => {
+    let ignore = false;
+    async function loadSettings() {
+      try {
+        const res = await fetch("/api/settings");
+        const data = await res.json();
+        if (!res.ok) {
+          if (!ignore) {
+            setSettingsError(data.error || "Failed to load settings");
+            setSettingsLoading(false);
+          }
+          return;
+        }
+        if (!ignore) {
+          setSettings(data);
+          setSettingsLoading(false);
+        }
+      } catch {
+        if (!ignore) {
+          setSettingsError("Failed to load settings");
+          setSettingsLoading(false);
+        }
+      }
+    }
+
+    loadSettings();
+    const interval = setInterval(loadSettings, 60000);
+    return () => {
+      ignore = true;
+      clearInterval(interval);
+    };
+  }, []);
+
   const orderItems = useMemo(
     () =>
       MENU.map((item) => ({
@@ -103,11 +139,38 @@ export default function QueuePage() {
     0
   );
 
+  const isWithinServiceWindow = useMemo(() => {
+    if (!settings) return true;
+    if (!settings.serviceStart || !settings.serviceEnd) return true;
+    const toMinutes = (time) => {
+      const [hours = "0", minutes = "0"] = String(time).split(":");
+      return Number(hours) * 60 + Number(minutes);
+    };
+    const now = new Date();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const startMinutes = toMinutes(settings.serviceStart);
+    const endMinutes = toMinutes(settings.serviceEnd);
+    if (Number.isNaN(startMinutes) || Number.isNaN(endMinutes)) return true;
+    if (startMinutes <= endMinutes) {
+      return nowMinutes >= startMinutes && nowMinutes <= endMinutes;
+    }
+    return nowMinutes >= startMinutes || nowMinutes <= endMinutes;
+  }, [settings]);
+
+  const availability = settings?.availability || { chai: true, bun: true };
+  const hasAnyAvailable = availability.chai || availability.bun;
+  const queueOpen = isWithinServiceWindow && hasAnyAvailable;
+
   const canSubmit =
-    name.trim().length > 0 && orderItems.length > 0 && !submitting;
+    queueOpen && name.trim().length > 0 && orderItems.length > 0 && !submitting;
 
   function updateQuantity(key, delta) {
+    const available =
+      settings?.availability?.[key === "chai" ? "chai" : "bun"] ?? true;
     setQuantities((prev) => {
+      if (delta > 0 && !available) {
+        return prev;
+      }
       const next = Math.max(0, (prev[key] || 0) + delta);
       return { ...prev, [key]: next };
     });
@@ -164,16 +227,42 @@ export default function QueuePage() {
             <CardDescription>
               Tell us your name, choose your snacks, and get a live token instantly.
             </CardDescription>
+            {settings && settings.serviceStart && settings.serviceEnd && (
+              <Badge variant="outline" className="mt-2">
+                Service hours: {(() => {
+                  const formatTime = (timeStr) => {
+                    if (!timeStr) return "";
+                    const [hours, minutes] = String(timeStr).split(":");
+                    const h = Number(hours) || 0;
+                    const m = Number(minutes) || 0;
+                    const period = h >= 12 ? "PM" : "AM";
+                    const displayHour = h === 0 ? 12 : h > 12 ? h - 12 : h;
+                    return `${displayHour}:${String(m).padStart(2, "0")} ${period}`;
+                  };
+                  return `${formatTime(settings.serviceStart)} – ${formatTime(settings.serviceEnd)}`;
+                })()}
+              </Badge>
+            )}
           </CardHeader>
           <CardContent className="space-y-6">
+            {!queueOpen && !settingsLoading && (
+              <Alert variant="destructive">
+                <AlertDescription>
+                  {settings?.closedMessage ||
+                    "Queue is currently closed. Please visit us during service hours."}
+                </AlertDescription>
+              </Alert>
+            )}
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="space-y-2">
                 <Label htmlFor="name">Name</Label>
                 <Input
                   id="name"
-                  placeholder="Alan John"
+                  placeholder="Your Full Name "
                   value={name}
                   onChange={(e) => setName(e.target.value)}
+                  disabled={!queueOpen}
+                  required
                 />
               </div>
 
@@ -182,6 +271,7 @@ export default function QueuePage() {
                   const price =
                     item.key === "chai" ? pricing.chaiPrice : pricing.bunPrice;
                   const qty = quantities[item.key] || 0;
+                  const available = availability[item.key === "chai" ? "chai" : "bun"];
                   return (
                     <div
                       key={item.key}
@@ -192,6 +282,14 @@ export default function QueuePage() {
                         <p className="text-sm text-muted-foreground">
                           {price ? currency.format(price) : "Pricing pending"}
                         </p>
+                        {!available && (
+                          <Badge
+                            variant="outline"
+                            className="mt-2 border-amber-200 text-amber-700"
+                          >
+                            Sold out today
+                          </Badge>
+                        )}
                       </div>
                       <div className="flex items-center gap-3">
                         <Button
@@ -210,6 +308,7 @@ export default function QueuePage() {
                           type="button"
                           size="icon"
                           onClick={() => updateQuantity(item.key, 1)}
+                          disabled={qty >= 9 || !available || !queueOpen}
                         >
                           <Plus className="h-4 w-4" />
                         </Button>
@@ -262,9 +361,18 @@ export default function QueuePage() {
           </CardContent>
           <CardFooter className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
             <span>Need help? Ask a staff member to rescan the QR.</span>
-            <Badge variant="outline">Service hours 4pm – 11pm</Badge>
+            <Badge variant="outline">
+              {settings
+                ? `Service hours ${settings.serviceStart || "--"} – ${settings.serviceEnd || "--"}`
+                : "Loading service hours"}
+            </Badge>
           </CardFooter>
         </Card>
+        {settingsError && (
+          <Alert variant="destructive" className="mt-4">
+            <AlertDescription>{settingsError}</AlertDescription>
+          </Alert>
+        )}
       </div>
     </main>
   );

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { CheckCircle2, Coffee } from "lucide-react";
@@ -16,6 +17,33 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
 export default function ServedPage() {
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const notify = async () => {
+      if ("Notification" in window) {
+        try {
+          let permission = Notification.permission;
+          if (permission !== "granted") {
+            permission = await Notification.requestPermission();
+          }
+          if (permission === "granted") {
+            new Notification("Your chai is ready!", {
+              body: "Pick it up at the counter while it’s piping hot.",
+              icon: "/thechaicouple.jpg",
+            });
+          }
+        } catch {
+          // ignore
+        }
+      }
+      if ("vibrate" in navigator) {
+        navigator.vibrate(200);
+      }
+    };
+
+    notify();
+  }, []);
+
   return (
     <main className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-amber-50 py-10">
       <div className="container max-w-3xl">

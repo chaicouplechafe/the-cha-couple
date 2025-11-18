@@ -35,6 +35,7 @@ export default function StatusPage() {
   const [error, setError] = useState("");
   const [pricing, setPricing] = useState({ chaiPrice: 0, bunPrice: 0 });
   const [refreshing, setRefreshing] = useState(false);
+  const [streamSettings, setStreamSettings] = useState(null);
 
   const fetchStatus = useCallback(
     async (opts = { manual: false, silent: false }) => {
@@ -99,6 +100,9 @@ export default function StatusPage() {
     source.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
+        if (payload.settings) {
+          setStreamSettings(payload.settings);
+        }
         const tickets = Array.isArray(payload.tickets) ? payload.tickets : [];
         const ticket = tickets.find((t) => t.id === id);
         if (!ticket) {
@@ -196,6 +200,17 @@ export default function StatusPage() {
   const status = data?.status || "waiting";
   const tokenNumber = data?.basePosition ?? null;
 
+  const isSoldOut = useMemo(() => {
+    if (!data?.items || !streamSettings?.availability) return false;
+    const availability = streamSettings.availability;
+    return data.items.some((item) => {
+      if (item.qty <= 0) return false;
+      if (item.name === "Irani Chai" && !availability.chai) return true;
+      if (item.name === "Bun" && !availability.bun) return true;
+      return false;
+    });
+  }, [data, streamSettings]);
+
   useEffect(() => {
     if (status !== "ready") return;
     if (typeof window !== "undefined") {
@@ -269,16 +284,24 @@ export default function StatusPage() {
                       {data.position === null ? "-" : data.position}
                     </p>
                   </div>
-                  <Badge
-                    variant={status === "ready" ? "secondary" : "outline"}
-                    className={`px-5 py-1.5 text-base ${
-                      status === "ready"
-                        ? "bg-green-50 text-green-900 border-green-100"
-                        : "border-yellow-300 text-yellow-700"
-                    }`}
-                  >
-                    {status === "ready" ? "Ready for pickup" : "Waiting"}
-                  </Badge>
+                  {isSoldOut ? (
+                    <Alert variant="destructive" className="text-center">
+                      <AlertDescription className="font-semibold">
+                        One or more items in your order are now sold out. Please exit the queue and rejoin when items are available again.
+                      </AlertDescription>
+                    </Alert>
+                  ) : (
+                    <Badge
+                      variant={status === "ready" ? "secondary" : "outline"}
+                      className={`px-5 py-1.5 text-base ${
+                        status === "ready"
+                          ? "bg-green-50 text-green-900 border-green-100"
+                          : "border-yellow-300 text-yellow-700"
+                      }`}
+                    >
+                      {status === "ready" ? "Ready for pickup" : "Waiting"}
+                    </Badge>
+                  )}
 
                   {orderSummary.length > 0 && (
                     <div className="rounded-2xl border bg-card p-4 text-left">
@@ -286,17 +309,33 @@ export default function StatusPage() {
                         Order
                       </p>
                       <div className="space-y-2 text-sm">
-                        {orderSummary.map((item) => (
-                          <div
-                            key={item.name}
-                            className="flex items-center justify-between text-muted-foreground"
-                          >
-                            <span>
-                              {item.name} × {item.qty}
-                            </span>
-                            <span>{currency.format(item.subtotal)}</span>
-                          </div>
-                        ))}
+                        {orderSummary.map((item) => {
+                          const isItemSoldOut =
+                            streamSettings?.availability &&
+                            ((item.name === "Irani Chai" &&
+                              !streamSettings.availability.chai) ||
+                              (item.name === "Bun" &&
+                                !streamSettings.availability.bun));
+                          return (
+                            <div
+                              key={item.name}
+                              className="flex items-center justify-between text-muted-foreground"
+                            >
+                              <span className="flex items-center gap-2">
+                                {item.name} × {item.qty}
+                                {isItemSoldOut && (
+                                  <Badge
+                                    variant="destructive"
+                                    className="text-xs"
+                                  >
+                                    Sold out
+                                  </Badge>
+                                )}
+                              </span>
+                              <span>{currency.format(item.subtotal)}</span>
+                            </div>
+                          );
+                        })}
                       </div>
                       <div className="mt-3 flex items-center justify-between font-semibold">
                         <span>Total</span>
