@@ -73,7 +73,7 @@ export default function StatusPage() {
               window.localStorage.removeItem("queueTicket");
             }
             setTicketNotFound(true);
-            setError("Ticket not found. You may have been removed from the queue.");
+            setError("You may have been removed from the queue.Please come to tomorrow to join the queue.");
             setLoading(false);
           } else {
             // First check - ticket might not exist yet, keep loading

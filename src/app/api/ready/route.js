@@ -55,6 +55,7 @@ export async function PATCH(request) {
         status,
         updatedAt: serverTimestamp(),
         total,
+        paid: ticketData.paid ?? false,
       },
       { merge: true }
     );

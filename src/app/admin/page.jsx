@@ -149,6 +149,7 @@ function AdminDashboard() {
   const [settingsSaving, setSettingsSaving] = useState(false);
 
   const [clearing, setClearing] = useState(false);
+  const [paidUpdating, setPaidUpdating] = useState({});
 
   const loadQueueTickets = useCallback(
     async ({ silent } = {}) => {
@@ -284,6 +285,29 @@ function AdminDashboard() {
     }
   }
 
+  async function updatePaid(id, dateKey, paid) {
+    setPaidUpdating((prev) => ({ ...prev, [id]: true }));
+    try {
+      const res = await fetch("/api/payment", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, dateKey, paid }),
+      });
+      if (!res.ok) {
+        throw new Error("Failed to update payment");
+      }
+      await loadDashboardTickets(dashboardDate, { silent: true });
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setPaidUpdating((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    }
+  }
+
   async function clearToday() {
     setClearing(true);
     try {
@@ -393,16 +417,18 @@ function AdminDashboard() {
         if (item.name === "Irani Chai") chaiCount += item.qty;
         if (item.name === "Bun") bunCount += item.qty;
       });
-      // ticketTotal prioritizes stored total field, prices only used as fallback for old tickets
-      revenue += ticketTotal(
-        ticket,
-        Number(chaiPrice) || 0,
-        Number(bunPrice) || 0
-      );
+      // Only include paid tickets in revenue
+      if (ticket.paid) {
+        revenue += ticketTotal(
+          ticket,
+          Number(chaiPrice) || 0,
+          Number(bunPrice) || 0
+        );
+      }
     });
     return { chaiCount, bunCount, revenue };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [readyTickets]); // Prices removed from deps - revenue uses stored totals, not current prices
+  }, [readyTickets]);
 
   return (
     <main className="min-h-screen bg-muted/40 py-10">
@@ -559,6 +585,7 @@ function AdminDashboard() {
                         <TableHead>Token</TableHead>
                         <TableHead>Name</TableHead>
                         <TableHead>Order</TableHead>
+                        <TableHead>Payment</TableHead>
                         <TableHead className="text-right">Total</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -571,6 +598,27 @@ function AdminDashboard() {
                           <TableCell>{ticket.name}</TableCell>
                           <TableCell className="text-muted-foreground">
                             {formatOrder(ticket.items)}
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              size="sm"
+                              variant={ticket.paid ? "default" : "outline"}
+                              className={
+                                ticket.paid
+                                  ? "bg-green-600 text-white hover:bg-green-600/90"
+                                  : undefined
+                              }
+                              onClick={() =>
+                                updatePaid(ticket.id, ticket.dateKey, !ticket.paid)
+                              }
+                              disabled={Boolean(paidUpdating[ticket.id])}
+                            >
+                              {paidUpdating[ticket.id]
+                                ? "Saving..."
+                                : ticket.paid
+                                ? "Paid"
+                                : "Mark paid"}
+                            </Button>
                           </TableCell>
                           <TableCell className="text-right font-semibold">
                             {currency.format(ticketTotal(ticket, Number(chaiPrice) || 0, Number(bunPrice) || 0))}

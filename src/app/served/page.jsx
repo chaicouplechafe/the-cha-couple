@@ -50,7 +50,7 @@ export default function ServedPage() {
               </Badge>
             </div>
             <CardTitle className="text-4xl font-semibold text-emerald-900">
-              Thank you! Your chai is ready.
+              Thank you! Your food is ready.
             </CardTitle>
             <CardDescription className="text-base text-muted-foreground">
               Show this screen to the staff, collect your order, and enjoy.
@@ -58,7 +58,7 @@ export default function ServedPage() {
           </CardHeader>
           <CardContent className="text-center text-muted-foreground">
             We’ve cleared your token from the queue. If you’d like another chai or bun,
-            feel free to rejoin the queue at any time.
+            feel free to rejoin the queue at service hours.
           </CardContent>
           <CardFooter className="flex flex-col gap-3 sm:flex-row sm:justify-center">
             <Button
