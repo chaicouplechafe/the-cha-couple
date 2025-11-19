@@ -91,35 +91,32 @@ export default function QueuePage() {
   }, []);
 
   useEffect(() => {
-    let ignore = false;
-    async function loadSettings() {
+    if (typeof window === "undefined") return;
+    
+    const dateKey = getTodayKey();
+    const source = new EventSource(`/api/queue/stream?date=${dateKey}`);
+    
+    source.onmessage = (event) => {
       try {
-        const res = await fetch("/api/settings");
-        const data = await res.json();
-        if (!res.ok) {
-          if (!ignore) {
-            setSettingsError(data.error || "Failed to load settings");
-            setSettingsLoading(false);
-          }
-          return;
-        }
-        if (!ignore) {
-          setSettings(data);
+        const payload = JSON.parse(event.data);
+        if (payload.settings) {
+          setSettings(payload.settings);
           setSettingsLoading(false);
+          setSettingsError("");
         }
       } catch {
-        if (!ignore) {
-          setSettingsError("Failed to load settings");
-          setSettingsLoading(false);
-        }
+        setSettingsError("Failed to process settings update");
+        setSettingsLoading(false);
       }
-    }
-
-    loadSettings();
-    const interval = setInterval(loadSettings, 60000);
+    };
+    
+    source.onerror = () => {
+      setSettingsError("Live updates interrupted. Settings may be outdated.");
+      setSettingsLoading(false);
+    };
+    
     return () => {
-      ignore = true;
-      clearInterval(interval);
+      source.close();
     };
   }, []);
 

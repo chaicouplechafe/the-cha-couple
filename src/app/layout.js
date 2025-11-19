@@ -11,9 +11,9 @@ export const metadata = {
   title: "Chai Bun Queue",
   description: "Realtime queue management for Irani chai & bun orders.",
   icons: {
-    icon: "/thechaicouple.jpg",
-    shortcut: "/thechaicouple.jpg",
-    apple: "/thechaicouple.jpg",
+    icon: "/thechaicouple.png",
+    shortcut: "/thechaicouple.png",
+    apple: "/thechaicouple.png",
   },
 };
 

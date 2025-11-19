@@ -34,53 +34,8 @@ export default function StatusPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [pricing, setPricing] = useState({ chaiPrice: 0, bunPrice: 0 });
-  const [refreshing, setRefreshing] = useState(false);
   const [streamSettings, setStreamSettings] = useState(null);
-
-  const fetchStatus = useCallback(
-    async (opts = { manual: false, silent: false }) => {
-      if (!id) return;
-      const manual = Boolean(opts.manual);
-      const silent = Boolean(opts.silent);
-      if (manual) {
-        setRefreshing(true);
-      } else if (!silent) {
-        setLoading(true);
-      }
-      try {
-        const dateKey = getTodayKey();
-        const res = await fetch(
-          `/api/position?id=${encodeURIComponent(id)}&date=${encodeURIComponent(
-            dateKey
-          )}`
-        );
-        const json = await res.json();
-        if (!res.ok) {
-          setData(null);
-          setError(json.error || "Failed to load status");
-          if (
-            (res.status === 404 || json.error === "Not found") &&
-            typeof window !== "undefined"
-          ) {
-            window.localStorage.removeItem("queueTicket");
-            router.replace("/queue");
-          }
-        } else {
-          setData(json);
-          setError("");
-        }
-      } catch {
-        setError("Failed to load status");
-      } finally {
-        if (manual) {
-          setRefreshing(false);
-        } else if (!silent) {
-          setLoading(false);
-        }
-      }
-    },
-    [id, router]
-  );
+  const [ticketNotFound, setTicketNotFound] = useState(false);
 
   useEffect(() => {
     if (!id || typeof window === "undefined") return;
@@ -97,6 +52,10 @@ export default function StatusPage() {
     if (!id) return;
     const dateKey = getTodayKey();
     const source = new EventSource(`/api/queue/stream?date=${dateKey}`);
+    
+    // Track if we've seen the ticket at least once
+    let hasSeenTicket = false;
+    
     source.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
@@ -105,9 +64,27 @@ export default function StatusPage() {
         }
         const tickets = Array.isArray(payload.tickets) ? payload.tickets : [];
         const ticket = tickets.find((t) => t.id === id);
+        
         if (!ticket) {
+          // Ticket not found - check if we've seen it before
+          if (hasSeenTicket) {
+            // Ticket was removed or doesn't exist anymore
+            if (typeof window !== "undefined") {
+              window.localStorage.removeItem("queueTicket");
+            }
+            setTicketNotFound(true);
+            setError("Ticket not found. You may have been removed from the queue.");
+            setLoading(false);
+          } else {
+            // First check - ticket might not exist yet, keep loading
+            setLoading(true);
+          }
           return;
         }
+        
+        // Ticket found
+        hasSeenTicket = true;
+        setTicketNotFound(false);
         const waitingTickets = tickets.filter((t) => t.status === "waiting");
         const waitingIndex = waitingTickets.findIndex((t) => t.id === id);
         setData({
@@ -119,10 +96,12 @@ export default function StatusPage() {
         setError("");
       } catch {
         setError("Failed to process live updates");
+        setLoading(false);
       }
     };
     source.onerror = () => {
       setError("Live updates interrupted. Tap refresh to continue.");
+      setLoading(false);
     };
     return () => {
       source.close();
@@ -255,6 +234,12 @@ export default function StatusPage() {
                 <Skeleton className="h-10 w-32 mx-auto" />
                 <Skeleton className="h-24 rounded-2xl" />
               </div>
+            ) : ticketNotFound ? (
+              <Alert variant="destructive">
+                <AlertDescription>
+                  Your ticket was not found. You may have been removed from the queue.
+                </AlertDescription>
+              </Alert>
             ) : error ? (
               <Alert variant="destructive">
                 <AlertDescription>{error}</AlertDescription>
@@ -351,11 +336,15 @@ export default function StatusPage() {
             <div className="flex flex-col gap-3 sm:flex-row">
               <Button
                 className="flex-1"
-                onClick={() => fetchStatus({ manual: true })}
-                disabled={refreshing}
+                onClick={() => {
+                  // Refresh by reloading the page - stream will reconnect automatically
+                  if (typeof window !== "undefined") {
+                    window.location.reload();
+                  }
+                }}
               >
                 <RotateCw className="mr-2 h-4 w-4" />
-                {refreshing ? "Refreshing..." : "Refresh"}
+                Refresh
               </Button>
               <Button
                 variant="outline"
