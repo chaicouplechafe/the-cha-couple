@@ -161,6 +161,11 @@ function AdminDashboard() {
   const [editError, setEditError] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [deletingTicket, setDeletingTicket] = useState(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [ticketToDelete, setTicketToDelete] = useState(null);
+  const [deleteError, setDeleteError] = useState("");
+  const [orderDetailsDialogOpen, setOrderDetailsDialogOpen] = useState(false);
+  const [selectedTicket, setSelectedTicket] = useState(null);
 
   const loadQueueTickets = useCallback(
     async ({ silent } = {}) => {
@@ -226,7 +231,11 @@ function AdminDashboard() {
     source.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
-        setQueueTickets(payload.tickets || []);
+        
+        // Always update tickets if they exist in the payload
+        if (payload.tickets !== undefined) {
+          setQueueTickets(Array.isArray(payload.tickets) ? payload.tickets : []);
+        }
         
         // Update settings (including inventory) in real-time
         if (payload.settings) {
@@ -249,7 +258,8 @@ function AdminDashboard() {
         setQueueLoading(false);
         setQueueError("");
         setConnectionStatus("connected");
-      } catch {
+      } catch (err) {
+        console.error("Error parsing stream message:", err, event.data);
         setConnectionStatus("error");
         setQueueLoading(false);
         // Don't show error message, just update status
@@ -368,11 +378,19 @@ function AdminDashboard() {
           setClosedMessage(payload.settings.closedMessage || "");
           
           // Auto-adjust edit quantities if inventory drops below selected quantities
+          // Account for items already in the current order
           if (editingTicket) {
+            const currentChaiQty = editingTicket.items?.find((item) => item.name === "Special Chai" || item.name === "Irani Chai")?.qty || 0;
+            const currentBunQty = editingTicket.items?.find((item) => item.name === "Bun")?.qty || 0;
+            const currentTiramisuQty = editingTicket.items?.find((item) => item.name === "Tiramisu")?.qty || 0;
+            const availableChai = (newInventory.chai || 0) + currentChaiQty;
+            const availableBun = (newInventory.bun || 0) + currentBunQty;
+            const availableTiramisu = (newInventory.tiramisu || 0) + currentTiramisuQty;
+            
             setEditQuantities((prev) => ({
-              chai: Math.min(prev.chai || 0, newInventory.chai || 0),
-              bun: Math.min(prev.bun || 0, newInventory.bun || 0),
-              tiramisu: Math.min(prev.tiramisu || 0, newInventory.tiramisu || 0),
+              chai: Math.min(prev.chai || 0, availableChai),
+              bun: Math.min(prev.bun || 0, availableBun),
+              tiramisu: Math.min(prev.tiramisu || 0, availableTiramisu),
             }));
           }
           setInventoryLoaded(true);
@@ -397,7 +415,8 @@ function AdminDashboard() {
         body: JSON.stringify({ id, dateKey, status }),
       });
       if (!res.ok) return;
-      await loadQueueTickets();
+      // The stream will automatically update the queue
+      // Only refresh dashboard if needed
       if (dateKey === dashboardDate) {
         await loadDashboardTickets(dashboardDate, { silent: true });
       }
@@ -416,7 +435,14 @@ function AdminDashboard() {
       bun: bunItem ? Number(bunItem.qty) || 0 : 0,
       tiramisu: tiramisuItem ? Number(tiramisuItem.qty) || 0 : 0,
     });
-    setEditingTicket(ticket);
+    // Store a stable reference to the ticket
+    setEditingTicket({ ...ticket, id: ticket.id, dateKey: ticket.dateKey });
+    setEditError("");
+  }
+
+  function cancelEdit() {
+    setEditingTicket(null);
+    setEditQuantities({ chai: 0, bun: 0, tiramisu: 0 });
     setEditError("");
   }
 
@@ -471,31 +497,48 @@ function AdminDashboard() {
         return;
       }
 
+      // Success - close dialog and reset state
+      // The stream will automatically update the queue and inventory
       setEditingTicket(null);
-      await loadQueueTickets();
-      await reloadInventory();
+      setEditQuantities({ chai: 0, bun: 0, tiramisu: 0 });
+      setEditSaving(false);
     } catch (err) {
-      setEditError("Failed to update order");
+      console.error("Error saving edit:", err);
+      setEditError(err.message || "Failed to update order");
       setEditSaving(false);
     }
   }
 
-  async function deleteTicket(id, dateKey) {
-    if (!confirm("Are you sure you want to delete this order?")) return;
+  function openDeleteDialog(ticket) {
+    setTicketToDelete(ticket);
+    setDeleteDialogOpen(true);
+    setDeleteError("");
+  }
+
+  async function confirmDelete() {
+    if (!ticketToDelete) return;
     
+    const { id, dateKey } = ticketToDelete;
     setDeletingTicket(id);
+    setDeleteError("");
+    
     try {
       const res = await fetch(`/api/ticket?id=${encodeURIComponent(id)}&date=${encodeURIComponent(dateKey)}`, {
         method: "DELETE",
       });
+      const json = await res.json();
       if (!res.ok) {
-        throw new Error("Failed to delete ticket");
+        throw new Error(json.error || "Failed to delete ticket");
       }
-      await loadQueueTickets();
-      await reloadInventory();
+      
+      // Success - close dialog
+      // The stream will automatically update the queue and inventory
+      setDeleteDialogOpen(false);
+      setTicketToDelete(null);
+      setDeletingTicket(null);
     } catch (err) {
-      console.error(err);
-    } finally {
+      console.error("Delete ticket error:", err);
+      setDeleteError(err.message || "Failed to delete ticket. Please try again.");
       setDeletingTicket(null);
     }
   }
@@ -526,11 +569,17 @@ function AdminDashboard() {
   async function clearToday() {
     setClearing(true);
     try {
-      await fetch("/api/queue", { method: "DELETE" });
-      await loadQueueTickets();
-      await loadDashboardTickets(dashboardDate);
-    } catch {
-      // ignore
+      const res = await fetch("/api/queue", { method: "DELETE" });
+      if (!res.ok) {
+        throw new Error("Failed to clear queue");
+      }
+      // The stream will automatically update the queue
+      // Only refresh dashboard if needed (it doesn't have a stream)
+      if (todayKey === dashboardDate) {
+        await loadDashboardTickets(dashboardDate, { silent: true });
+      }
+    } catch (err) {
+      console.error("Error clearing queue:", err);
     } finally {
       setClearing(false);
     }
@@ -787,7 +836,14 @@ function AdminDashboard() {
                     </TableHeader>
                     <TableBody>
                       {queueTicketsWaiting.map((ticket, index) => (
-                        <TableRow key={ticket.id}>
+                        <TableRow 
+                          key={ticket.id}
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => {
+                            setSelectedTicket({ ...ticket, queueNumber: index + 1 });
+                            setOrderDetailsDialogOpen(true);
+                          }}
+                        >
                           <TableCell>{index + 1}</TableCell>
                           <TableCell className="font-medium">
                             {ticket.basePosition}
@@ -801,23 +857,30 @@ function AdminDashboard() {
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() => openEditDialog(ticket)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openEditDialog(ticket);
+                                }}
                               >
                                 <Edit className="h-4 w-4" />
                               </Button>
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() => deleteTicket(ticket.id, ticket.dateKey)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openDeleteDialog(ticket);
+                                }}
                                 disabled={deletingTicket === ticket.id}
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                               <Button
                                 size="sm"
-                                onClick={() =>
-                                  updateStatus(ticket.id, ticket.dateKey, "ready")
-                                }
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  updateStatus(ticket.id, ticket.dateKey, "ready");
+                                }}
                               >
                                 Done
                               </Button>
@@ -832,7 +895,7 @@ function AdminDashboard() {
             </Card>
 
             {/* Edit Order Dialog */}
-            <Dialog open={editingTicket !== null} onOpenChange={(open) => !open && setEditingTicket(null)}>
+            <Dialog open={editingTicket !== null} onOpenChange={(open) => !open && cancelEdit()}>
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>Edit Order</DialogTitle>
@@ -842,108 +905,286 @@ function AdminDashboard() {
                 </DialogHeader>
                 <div className="space-y-4 py-4">
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between rounded-2xl border bg-card px-4 py-3">
-                      <div>
-                        <p className="font-medium">Special Chai</p>
-                        <p className="text-sm text-muted-foreground">
-                          Available: {inventory?.chai ?? 0}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          onClick={() => updateEditQuantity("chai", -1)}
-                          disabled={editQuantities.chai === 0}
-                        >
-                          <Minus className="h-4 w-4" />
-                        </Button>
-                        <span className="w-8 text-center text-lg font-semibold">
-                          {editQuantities.chai}
-                        </span>
-                        <Button
-                          type="button"
-                          size="icon"
-                          onClick={() => updateEditQuantity("chai", 1)}
-                          disabled={inventory && editQuantities.chai >= inventory.chai}
-                        >
-                          <Plus className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between rounded-2xl border bg-card px-4 py-3">
-                      <div>
-                        <p className="font-medium">Bun</p>
-                        <p className="text-sm text-muted-foreground">
-                          Available: {inventory?.bun ?? 0}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          onClick={() => updateEditQuantity("bun", -1)}
-                          disabled={editQuantities.bun === 0}
-                        >
-                          <Minus className="h-4 w-4" />
-                        </Button>
-                        <span className="w-8 text-center text-lg font-semibold">
-                          {editQuantities.bun}
-                        </span>
-                        <Button
-                          type="button"
-                          size="icon"
-                          onClick={() => updateEditQuantity("bun", 1)}
-                          disabled={inventory && editQuantities.bun >= inventory.bun}
-                        >
-                          <Plus className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between rounded-2xl border bg-card px-4 py-3">
-                      <div>
-                        <p className="font-medium">Tiramisu</p>
-                        <p className="text-sm text-muted-foreground">
-                          Available: {inventory?.tiramisu ?? 0}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          onClick={() => updateEditQuantity("tiramisu", -1)}
-                          disabled={editQuantities.tiramisu === 0}
-                        >
-                          <Minus className="h-4 w-4" />
-                        </Button>
-                        <span className="w-8 text-center text-lg font-semibold">
-                          {editQuantities.tiramisu}
-                        </span>
-                        <Button
-                          type="button"
-                          size="icon"
-                          onClick={() => updateEditQuantity("tiramisu", 1)}
-                          disabled={inventory && editQuantities.tiramisu >= inventory.tiramisu}
-                        >
-                          <Plus className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
+                    {(() => {
+                      // Calculate available inventory: current inventory + items already in this order
+                      // When we save, we'll restore the current order's items first, then deduct new quantities
+                      const currentChaiQty = editingTicket?.items?.find((item) => item.name === "Special Chai" || item.name === "Irani Chai")?.qty || 0;
+                      const currentBunQty = editingTicket?.items?.find((item) => item.name === "Bun")?.qty || 0;
+                      const currentTiramisuQty = editingTicket?.items?.find((item) => item.name === "Tiramisu")?.qty || 0;
+                      const availableChai = (inventory?.chai ?? 0) + currentChaiQty;
+                      const availableBun = (inventory?.bun ?? 0) + currentBunQty;
+                      const availableTiramisu = (inventory?.tiramisu ?? 0) + currentTiramisuQty;
+                      
+                      return (
+                        <>
+                          <div className="flex items-center justify-between rounded-2xl border bg-card px-4 py-3">
+                            <div>
+                              <p className="font-medium">Special Chai</p>
+                              <p className="text-sm text-muted-foreground">
+                                Available: {availableChai}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                onClick={() => updateEditQuantity("chai", -1)}
+                                disabled={editQuantities.chai === 0}
+                              >
+                                <Minus className="h-4 w-4" />
+                              </Button>
+                              <span className="w-8 text-center text-lg font-semibold">
+                                {editQuantities.chai}
+                              </span>
+                              <Button
+                                type="button"
+                                size="icon"
+                                onClick={() => updateEditQuantity("chai", 1)}
+                                disabled={editQuantities.chai >= availableChai}
+                              >
+                                <Plus className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between rounded-2xl border bg-card px-4 py-3">
+                            <div>
+                              <p className="font-medium">Bun</p>
+                              <p className="text-sm text-muted-foreground">
+                                Available: {availableBun}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                onClick={() => updateEditQuantity("bun", -1)}
+                                disabled={editQuantities.bun === 0}
+                              >
+                                <Minus className="h-4 w-4" />
+                              </Button>
+                              <span className="w-8 text-center text-lg font-semibold">
+                                {editQuantities.bun}
+                              </span>
+                              <Button
+                                type="button"
+                                size="icon"
+                                onClick={() => updateEditQuantity("bun", 1)}
+                                disabled={editQuantities.bun >= availableBun}
+                              >
+                                <Plus className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between rounded-2xl border bg-card px-4 py-3">
+                            <div>
+                              <p className="font-medium">Tiramisu</p>
+                              <p className="text-sm text-muted-foreground">
+                                Available: {availableTiramisu}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                onClick={() => updateEditQuantity("tiramisu", -1)}
+                                disabled={editQuantities.tiramisu === 0}
+                              >
+                                <Minus className="h-4 w-4" />
+                              </Button>
+                              <span className="w-8 text-center text-lg font-semibold">
+                                {editQuantities.tiramisu}
+                              </span>
+                              <Button
+                                type="button"
+                                size="icon"
+                                onClick={() => updateEditQuantity("tiramisu", 1)}
+                                disabled={editQuantities.tiramisu >= availableTiramisu}
+                              >
+                                <Plus className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
                 <DialogFooter>
                   <Button
                     variant="outline"
-                    onClick={() => setEditingTicket(null)}
+                    onClick={cancelEdit}
                     disabled={editSaving}
                   >
                     Cancel
                   </Button>
                   <Button onClick={saveEdit} disabled={editSaving}>
                     {editSaving ? "Saving..." : "Save Changes"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            {/* Delete Order Confirmation Dialog */}
+            <Dialog open={deleteDialogOpen} onOpenChange={(open) => {
+              if (!open) {
+                setDeleteDialogOpen(false);
+                setTicketToDelete(null);
+                setDeleteError("");
+              }
+            }}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Delete Order</DialogTitle>
+                  <DialogDescription>
+                    Are you sure you want to delete this order? This action cannot be undone.
+                  </DialogDescription>
+                </DialogHeader>
+                {ticketToDelete && (
+                  <div className="mt-2 rounded-md bg-muted p-3">
+                    <p className="font-medium">{ticketToDelete.name}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {formatOrder(ticketToDelete.items)}
+                    </p>
+                  </div>
+                )}
+                {deleteError && (
+                  <Alert variant="destructive">
+                    <AlertDescription>{deleteError}</AlertDescription>
+                  </Alert>
+                )}
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setDeleteDialogOpen(false);
+                      setTicketToDelete(null);
+                      setDeleteError("");
+                    }}
+                    disabled={deletingTicket === ticketToDelete?.id}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    onClick={confirmDelete}
+                    disabled={deletingTicket === ticketToDelete?.id}
+                  >
+                    {deletingTicket === ticketToDelete?.id ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Deleting...
+                      </>
+                    ) : (
+                      "Delete Order"
+                    )}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            {/* Order Details Dialog */}
+            <Dialog open={orderDetailsDialogOpen} onOpenChange={(open) => {
+              if (!open) {
+                setOrderDetailsDialogOpen(false);
+                setSelectedTicket(null);
+              }
+            }}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Order Details</DialogTitle>
+                  <DialogDescription>
+                    View and manage this order
+                  </DialogDescription>
+                </DialogHeader>
+                {selectedTicket && (
+                  <div className="space-y-4 py-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="rounded-lg border bg-card p-4">
+                        <p className="text-sm text-muted-foreground">Queue Number</p>
+                        <p className="text-2xl font-bold">{selectedTicket.queueNumber}</p>
+                      </div>
+                      <div className="rounded-lg border bg-card p-4">
+                        <p className="text-sm text-muted-foreground">Token Number</p>
+                        <p className="text-2xl font-bold">{selectedTicket.basePosition}</p>
+                      </div>
+                    </div>
+                    <div className="rounded-lg border bg-card p-4">
+                      <p className="text-sm text-muted-foreground mb-2">Customer Name</p>
+                      <p className="text-lg font-semibold">{selectedTicket.name}</p>
+                    </div>
+                    <div className="rounded-lg border bg-card p-4">
+                      <p className="text-sm text-muted-foreground mb-2">Items</p>
+                      <div className="space-y-1">
+                        {Array.isArray(selectedTicket.items) && selectedTicket.items.length > 0 ? (
+                          selectedTicket.items
+                            .filter((item) => item.qty > 0)
+                            .map((item, idx) => (
+                              <div key={idx} className="flex justify-between">
+                                <span className="text-muted-foreground">{item.name}</span>
+                                <span className="font-medium">× {item.qty}</span>
+                              </div>
+                            ))
+                        ) : (
+                          <p className="text-muted-foreground">—</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border bg-card p-4">
+                      <div className="flex justify-between items-center">
+                        <p className="text-sm text-muted-foreground">Total</p>
+                        <p className="text-2xl font-bold">
+                          ₹{ticketTotal(
+                            selectedTicket,
+                            Number(chaiPrice) || 0,
+                            Number(bunPrice) || 0,
+                            Number(tiramisuPrice) || 0
+                          ).toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <DialogFooter className="flex-col sm:flex-row gap-2">
+                  <Button
+                    variant="destructive"
+                    onClick={() => {
+                      if (selectedTicket) {
+                        setOrderDetailsDialogOpen(false);
+                        openDeleteDialog(selectedTicket);
+                      }
+                    }}
+                    disabled={deletingTicket === selectedTicket?.id}
+                    className="w-full sm:w-auto"
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      if (selectedTicket) {
+                        setOrderDetailsDialogOpen(false);
+                        openEditDialog(selectedTicket);
+                      }
+                    }}
+                    className="w-full sm:w-auto"
+                  >
+                    <Edit className="mr-2 h-4 w-4" />
+                    Edit
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      if (selectedTicket) {
+                        setOrderDetailsDialogOpen(false);
+                        updateStatus(selectedTicket.id, selectedTicket.dateKey, "ready");
+                      }
+                    }}
+                    className="w-full sm:w-auto"
+                  >
+                    Done
                   </Button>
                 </DialogFooter>
               </DialogContent>

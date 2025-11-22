@@ -36,17 +36,19 @@ export async function DELETE(request) {
         // Only restore inventory if ticket status is "waiting"
         const shouldRestoreInventory = ticketData.status === "waiting";
 
+        // ALL READS MUST BE DONE FIRST
+        // Read settings BEFORE any writes (Firestore requirement)
+        let settingsSnap = null;
+        if (shouldRestoreInventory) {
+          settingsSnap = await tx.get(settingsRef);
+        }
+
+        // NOW DO ALL WRITES
         // Delete the ticket
         tx.delete(ticketRef);
 
         // Restore inventory if needed
-        if (shouldRestoreInventory) {
-          // Read settings
-          const settingsSnap = await tx.get(settingsRef);
-          if (!settingsSnap.exists()) {
-            return; // Settings not found, skip restore
-          }
-
+        if (shouldRestoreInventory && settingsSnap && settingsSnap.exists()) {
           const currentSettings = settingsSnap.data();
           const currentInventory = currentSettings.inventory || { chai: 0, bun: 0, tiramisu: 0 };
           
@@ -165,21 +167,23 @@ export async function PATCH(request) {
         const currentSettings = settingsSnap.data();
         const currentInventory = currentSettings.inventory || { chai: 0, bun: 0, tiramisu: 0 };
 
-        // Calculate net change
+        // Calculate net change (positive = need more, negative = need less)
         const chaiChange = newChaiQty - oldChaiQty;
         const bunChange = newBunQty - oldBunQty;
         const tiramisuChange = newTiramisuQty - oldTiramisuQty;
 
-        // Check if new quantities exceed available inventory
-        const availableChai = (currentInventory.chai || 0) - chaiChange;
-        const availableBun = (currentInventory.bun || 0) - bunChange;
-        const availableTiramisu = (currentInventory.tiramisu || 0) - tiramisuChange;
+        // Calculate new inventory: current + old (restore) - new (decrement)
+        // This ensures we restore what was taken and then take what's needed
+        const newChaiInventory = (currentInventory.chai || 0) + oldChaiQty - newChaiQty;
+        const newBunInventory = (currentInventory.bun || 0) + oldBunQty - newBunQty;
+        const newTiramisuInventory = (currentInventory.tiramisu || 0) + oldTiramisuQty - newTiramisuQty;
 
-        if (availableChai < 0 || availableBun < 0 || availableTiramisu < 0) {
+        // Check if new quantities exceed available inventory
+        if (newChaiInventory < 0 || newBunInventory < 0 || newTiramisuInventory < 0) {
           throw new Error("Stock exceeded");
         }
 
-        // Update ticket
+        // Update ticket FIRST
         tx.update(ticketRef, {
           items,
           updatedAt: serverTimestamp(),
@@ -187,9 +191,9 @@ export async function PATCH(request) {
 
         // Update inventory atomically
         tx.update(settingsRef, {
-          "inventory.chai": availableChai,
-          "inventory.bun": availableBun,
-          "inventory.tiramisu": availableTiramisu,
+          "inventory.chai": newChaiInventory,
+          "inventory.bun": newBunInventory,
+          "inventory.tiramisu": newTiramisuInventory,
           updatedAt: serverTimestamp(),
         });
       });

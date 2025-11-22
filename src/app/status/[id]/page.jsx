@@ -32,10 +32,9 @@ export default function StatusPage() {
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [pricing, setPricing] = useState({ chaiPrice: 0, bunPrice: 0, tiramisuPrice: 0 });
   const [streamSettings, setStreamSettings] = useState(null);
-  const [ticketNotFound, setTicketNotFound] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState("connecting"); // "connected", "disconnected", "error", "connecting"
 
   useEffect(() => {
     if (!id || typeof window === "undefined") return;
@@ -51,60 +50,96 @@ export default function StatusPage() {
   useEffect(() => {
     if (!id) return;
     const dateKey = getTodayKey();
-    const source = new EventSource(`/api/queue/stream?date=${dateKey}`);
+    let source = null;
+    let reconnectTimeout = null;
+    let isMounted = true;
     
     // Track if we've seen the ticket at least once
     let hasSeenTicket = false;
     
-    source.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.settings) {
-          setStreamSettings(payload.settings);
+    function connect() {
+      if (!isMounted) return;
+      
+      source = new EventSource(`/api/queue/stream?date=${dateKey}`);
+      
+      source.onopen = () => {
+        if (isMounted) {
+          setConnectionStatus("connected");
         }
-        const tickets = Array.isArray(payload.tickets) ? payload.tickets : [];
-        const ticket = tickets.find((t) => t.id === id);
-        
-        if (!ticket) {
-          // Ticket not found - check if we've seen it before
-          if (hasSeenTicket) {
-            // Ticket was removed or doesn't exist anymore
-            if (typeof window !== "undefined") {
-              window.localStorage.removeItem("queueTicket");
-            }
-            setTicketNotFound(true);
-            setError("You may have been removed from the queue.Please come to tomorrow to join the queue.");
-            setLoading(false);
-          } else {
-            // First check - ticket might not exist yet, keep loading
-            setLoading(true);
+      };
+      
+      source.onmessage = (event) => {
+        if (!isMounted) return;
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.settings) {
+            setStreamSettings(payload.settings);
           }
-          return;
+          const tickets = Array.isArray(payload.tickets) ? payload.tickets : [];
+          const ticket = tickets.find((t) => t.id === id);
+          
+          if (!ticket) {
+            // Ticket not found - check if we've seen it before
+            if (hasSeenTicket) {
+              // Ticket was removed or doesn't exist anymore - redirect to queue
+              if (typeof window !== "undefined") {
+                window.localStorage.removeItem("queueTicket");
+              }
+              // Redirect to queue page
+              router.replace("/queue");
+              return;
+            } else {
+              // First check - ticket might not exist yet, keep loading
+              setLoading(true);
+            }
+            return;
+          }
+          
+          // Ticket found
+          hasSeenTicket = true;
+          const waitingTickets = tickets.filter((t) => t.status === "waiting");
+          const waitingIndex = waitingTickets.findIndex((t) => t.id === id);
+          setData({
+            ...ticket,
+            position: waitingIndex === -1 ? null : waitingIndex + 1,
+            dateKey: payload.dateKey,
+          });
+          setLoading(false);
+          setConnectionStatus("connected");
+        } catch {
+          // Keep loading state, don't show error
+          if (isMounted) {
+            setConnectionStatus("error");
+          }
+        }
+      };
+      
+      source.onerror = () => {
+        if (!isMounted) return;
+        setConnectionStatus("disconnected");
+        if (source) {
+          source.close();
         }
         
-        // Ticket found
-        hasSeenTicket = true;
-        setTicketNotFound(false);
-        const waitingTickets = tickets.filter((t) => t.status === "waiting");
-        const waitingIndex = waitingTickets.findIndex((t) => t.id === id);
-        setData({
-          ...ticket,
-          position: waitingIndex === -1 ? null : waitingIndex + 1,
-          dateKey: payload.dateKey,
-        });
-        setLoading(false);
-        setError("");
-      } catch {
-        setError("Failed to process live updates");
-        setLoading(false);
-      }
-    };
-    source.onerror = () => {
-      setError("Live updates interrupted. Tap refresh to continue.");
-      setLoading(false);
-    };
+        // Try to reconnect after a delay
+        reconnectTimeout = setTimeout(() => {
+          if (isMounted) {
+            setConnectionStatus("connecting");
+            connect();
+          }
+        }, 3000);
+      };
+    }
+    
+    connect();
+    
     return () => {
-      source.close();
+      isMounted = false;
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (source) {
+        source.close();
+      }
+      setConnectionStatus("disconnected");
     };
   }, [id]);
 
@@ -227,7 +262,27 @@ export default function StatusPage() {
                 priority
               />
             </div>
-            <CardTitle className="text-3xl">Your Token</CardTitle>
+            <div className="flex items-center justify-center gap-2">
+              <CardTitle className="text-3xl">Your Token</CardTitle>
+              <div className="flex items-center gap-1.5">
+                <div
+                  className={`h-2 w-2 rounded-full ${
+                    connectionStatus === "connected"
+                      ? "bg-green-500 animate-pulse"
+                      : connectionStatus === "connecting"
+                      ? "bg-yellow-500 animate-pulse"
+                      : "bg-red-500"
+                  }`}
+                  title={
+                    connectionStatus === "connected"
+                      ? "Live"
+                      : connectionStatus === "connecting"
+                      ? "Connecting..."
+                      : "Reconnecting..."
+                  }
+                />
+              </div>
+            </div>
             <CardDescription>
               Keep this page open—your position updates every few seconds.
             </CardDescription>
@@ -240,16 +295,6 @@ export default function StatusPage() {
                 <Skeleton className="h-10 w-32 mx-auto" />
                 <Skeleton className="h-24 rounded-2xl" />
               </div>
-            ) : ticketNotFound ? (
-              <Alert variant="destructive">
-                <AlertDescription>
-                  Your ticket was not found. You may have been removed from the queue.
-                </AlertDescription>
-              </Alert>
-            ) : error ? (
-              <Alert variant="destructive">
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
             ) : (
               data && (
                 <div className="space-y-5 text-center">
