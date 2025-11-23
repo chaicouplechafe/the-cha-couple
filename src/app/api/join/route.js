@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db, getTodayKey, firestoreHelpers } from "@/lib/firebase";
 import { isChai, isBun, isTiramisu } from "@/lib/item-names";
+import { logFirestoreRead, logFirestoreWrite } from "@/lib/firebase-monitor";
 
 const {
   doc,
@@ -57,6 +58,7 @@ export async function POST(request) {
     const result = await runTransaction(db, async (tx) => {
       // Read queue day document
       const daySnap = await tx.get(dayRef);
+      logFirestoreRead(1, { endpoint: '/api/join', document: 'queue-day' });
       const current = daySnap.exists()
         ? daySnap.data().nextPosition || 0
         : 0;
@@ -64,6 +66,7 @@ export async function POST(request) {
 
       // Read settings document for inventory
       const settingsSnap = await tx.get(settingsRef);
+      logFirestoreRead(1, { endpoint: '/api/join', document: 'settings' });
       if (!settingsSnap.exists()) {
         throw new Error("Settings document not found");
       }
@@ -85,6 +88,7 @@ export async function POST(request) {
         },
         { merge: true }
       );
+      logFirestoreWrite(1, { endpoint: '/api/join', document: 'queue-day' });
 
       // Create ticket
       const ticketsCol = collection(dayRef, "tickets");
@@ -99,6 +103,7 @@ export async function POST(request) {
         dateKey,
       };
       tx.set(ticketRef, ticket);
+      logFirestoreWrite(1, { endpoint: '/api/join', document: 'ticket' });
 
       // Update inventory atomically
       tx.update(settingsRef, {
@@ -107,6 +112,7 @@ export async function POST(request) {
         "inventory.tiramisu": newTiramisuInventory,
         updatedAt: serverTimestamp(),
       });
+      logFirestoreWrite(1, { endpoint: '/api/join', document: 'settings' });
 
       return { id: ticketRef.id, position: nextPosition, dateKey, items };
     });

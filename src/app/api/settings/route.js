@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db, firestoreHelpers } from "@/lib/firebase";
+import { logFirestoreRead, logFirestoreWrite } from "@/lib/firebase-monitor";
 
 const { doc, getDoc, setDoc, serverTimestamp } = firestoreHelpers;
 
@@ -24,6 +25,7 @@ const DEFAULT_SETTINGS = {
 export async function GET() {
   try {
     const snap = await getDoc(SETTINGS_DOC);
+    logFirestoreRead(1, { endpoint: '/api/settings', document: 'settings', method: 'GET' });
     if (!snap.exists()) {
       return NextResponse.json(DEFAULT_SETTINGS, { status: 200 });
     }
@@ -51,18 +53,27 @@ export async function GET() {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const serviceStart = body.serviceStart || DEFAULT_SETTINGS.serviceStart;
-    const serviceEnd = body.serviceEnd || DEFAULT_SETTINGS.serviceEnd;
-    const closedMessage = body.closedMessage || DEFAULT_SETTINGS.closedMessage;
+    
+    // Read existing settings to preserve values not being updated
+    const existingSnap = await getDoc(SETTINGS_DOC);
+    const existingData = existingSnap.exists() ? existingSnap.data() : {};
+    
+    const serviceStart = body.serviceStart ?? existingData.serviceStart ?? DEFAULT_SETTINGS.serviceStart;
+    const serviceEnd = body.serviceEnd ?? existingData.serviceEnd ?? DEFAULT_SETTINGS.serviceEnd;
+    const closedMessage = body.closedMessage ?? existingData.closedMessage ?? DEFAULT_SETTINGS.closedMessage;
+    
+    // Handle inventory: use provided value, fallback to existing, then default
     const inventory = {
-      chai: Number(body.inventory?.chai) ?? DEFAULT_SETTINGS.inventory.chai,
-      bun: Number(body.inventory?.bun) ?? DEFAULT_SETTINGS.inventory.bun,
-      tiramisu: Number(body.inventory?.tiramisu) ?? DEFAULT_SETTINGS.inventory.tiramisu,
+      chai: body.inventory?.chai != null ? Number(body.inventory.chai) || 0 : (existingData.inventory?.chai ?? DEFAULT_SETTINGS.inventory.chai),
+      bun: body.inventory?.bun != null ? Number(body.inventory.bun) || 0 : (existingData.inventory?.bun ?? DEFAULT_SETTINGS.inventory.bun),
+      tiramisu: body.inventory?.tiramisu != null ? Number(body.inventory.tiramisu) || 0 : (existingData.inventory?.tiramisu ?? DEFAULT_SETTINGS.inventory.tiramisu),
     };
+    
+    // Handle buffer: use provided value, fallback to existing, then default
     const buffer = {
-      chai: Number(body.buffer?.chai) ?? DEFAULT_SETTINGS.buffer.chai,
-      bun: Number(body.buffer?.bun) ?? DEFAULT_SETTINGS.buffer.bun,
-      tiramisu: Number(body.buffer?.tiramisu) ?? DEFAULT_SETTINGS.buffer.tiramisu,
+      chai: body.buffer?.chai != null ? Number(body.buffer.chai) || 0 : (existingData.buffer?.chai ?? DEFAULT_SETTINGS.buffer.chai),
+      bun: body.buffer?.bun != null ? Number(body.buffer.bun) || 0 : (existingData.buffer?.bun ?? DEFAULT_SETTINGS.buffer.bun),
+      tiramisu: body.buffer?.tiramisu != null ? Number(body.buffer.tiramisu) || 0 : (existingData.buffer?.tiramisu ?? DEFAULT_SETTINGS.buffer.tiramisu),
     };
 
     await setDoc(
@@ -77,6 +88,7 @@ export async function POST(request) {
       },
       { merge: true }
     );
+    logFirestoreWrite(1, { endpoint: '/api/settings', document: 'settings', method: 'POST' });
 
     return NextResponse.json(
       { serviceStart, serviceEnd, closedMessage, inventory, buffer },

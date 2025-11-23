@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db, firestoreHelpers } from "@/lib/firebase";
 import { ITEM_NAMES, isChai, isBun, isTiramisu } from "@/lib/item-names";
+import { logFirestoreRead, logFirestoreWrite, logFirestoreDelete } from "@/lib/firebase-monitor";
 
 const { doc, collection, deleteDoc, getDoc, setDoc, updateDoc, serverTimestamp, runTransaction } = firestoreHelpers;
 
@@ -26,6 +27,7 @@ export async function DELETE(request) {
       await runTransaction(db, async (tx) => {
         // Read ticket
         const ticketSnap = await tx.get(ticketRef);
+        logFirestoreRead(1, { endpoint: '/api/ticket', document: 'ticket', method: 'DELETE' });
         if (!ticketSnap.exists()) {
           throw new Error("Ticket not found");
         }
@@ -41,11 +43,13 @@ export async function DELETE(request) {
         let settingsSnap = null;
         if (shouldRestoreInventory) {
           settingsSnap = await tx.get(settingsRef);
+          logFirestoreRead(1, { endpoint: '/api/ticket', document: 'settings', method: 'DELETE' });
         }
 
         // NOW DO ALL WRITES
         // Delete the ticket
         tx.delete(ticketRef);
+        logFirestoreDelete(1, { endpoint: '/api/ticket', document: 'ticket', method: 'DELETE' });
 
         // Restore inventory if needed
         if (shouldRestoreInventory && settingsSnap && settingsSnap.exists()) {
@@ -75,6 +79,7 @@ export async function DELETE(request) {
             "inventory.tiramisu": (currentInventory.tiramisu || 0) + tiramisuRestore,
             updatedAt: serverTimestamp(),
           });
+          logFirestoreWrite(1, { endpoint: '/api/ticket', document: 'settings', method: 'DELETE' });
         }
       });
     } catch (err) {
@@ -132,6 +137,7 @@ export async function PATCH(request) {
       await runTransaction(db, async (tx) => {
         // Read ticket
         const ticketSnap = await tx.get(ticketRef);
+        logFirestoreRead(1, { endpoint: '/api/ticket', document: 'ticket', method: 'PATCH' });
         if (!ticketSnap.exists()) {
           throw new Error("Ticket not found");
         }
@@ -160,6 +166,7 @@ export async function PATCH(request) {
 
         // Read settings
         const settingsSnap = await tx.get(settingsRef);
+        logFirestoreRead(1, { endpoint: '/api/ticket', document: 'settings', method: 'PATCH' });
         if (!settingsSnap.exists()) {
           throw new Error("Settings not found");
         }
@@ -188,6 +195,7 @@ export async function PATCH(request) {
           items,
           updatedAt: serverTimestamp(),
         });
+        logFirestoreWrite(1, { endpoint: '/api/ticket', document: 'ticket', method: 'PATCH' });
 
         // Update inventory atomically
         tx.update(settingsRef, {
@@ -196,6 +204,7 @@ export async function PATCH(request) {
           "inventory.tiramisu": newTiramisuInventory,
           updatedAt: serverTimestamp(),
         });
+        logFirestoreWrite(1, { endpoint: '/api/ticket', document: 'settings', method: 'PATCH' });
       });
     } catch (err) {
       if (err.message === "Ticket not found") {

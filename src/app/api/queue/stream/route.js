@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db, getTodayKey, firestoreHelpers } from "@/lib/firebase";
+import { logFirestoreRead, logFirestoreListen } from "@/lib/firebase-monitor";
 
 const { doc, collection, query, orderBy, onSnapshot, getDoc } = firestoreHelpers;
 
@@ -36,6 +37,7 @@ function initializeListeners(dateKey) {
   // Load initial settings
   getDoc(SETTINGS_DOC)
     .then((snap) => {
+      logFirestoreRead(1, { endpoint: '/api/queue/stream', document: 'settings', method: 'INIT' });
       if (snap.exists()) {
         settings = { ...DEFAULT_SETTINGS, ...snap.data() };
         const listenerState = listeners.get(dateKey);
@@ -49,9 +51,16 @@ function initializeListeners(dateKey) {
       // use defaults
     });
 
+  // Track listener setup
+  logFirestoreListen(1, { endpoint: '/api/queue/stream', document: 'tickets', method: 'LISTEN' });
   const unsubscribeTickets = onSnapshot(
     ticketsQuery,
     (snapshot) => {
+      // Each snapshot update counts as reads for all documents
+      const readCount = snapshot.docs.length;
+      if (readCount > 0) {
+        logFirestoreRead(readCount, { endpoint: '/api/queue/stream', document: 'tickets', method: 'LISTEN_UPDATE' });
+      }
       currentTickets = snapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
@@ -67,10 +76,13 @@ function initializeListeners(dateKey) {
     }
   );
 
+  // Track settings listener
+  logFirestoreListen(1, { endpoint: '/api/queue/stream', document: 'settings', method: 'LISTEN' });
   const unsubscribeSettings = onSnapshot(
     SETTINGS_DOC,
     (snapshot) => {
       if (snapshot.exists()) {
+        logFirestoreRead(1, { endpoint: '/api/queue/stream', document: 'settings', method: 'LISTEN_UPDATE' });
         const listenerState = listeners.get(dateKey);
         if (listenerState) {
           settings = { ...DEFAULT_SETTINGS, ...snapshot.data() };

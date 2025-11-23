@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db, firestoreHelpers } from "@/lib/firebase";
+import { logFirestoreRead, logFirestoreWrite } from "@/lib/firebase-monitor";
 
 const { doc, collection, getDoc, updateDoc, serverTimestamp } = firestoreHelpers;
 
@@ -20,6 +21,7 @@ export async function PATCH(request) {
     const dayRef = doc(db, "queues", dateKey);
     const ticketRef = doc(collection(dayRef, "tickets"), id);
     const ticketSnap = await getDoc(ticketRef);
+    logFirestoreRead(1, { endpoint: '/api/payment', document: 'ticket', method: 'PATCH' });
     if (!ticketSnap.exists()) {
       return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
     }
@@ -28,6 +30,7 @@ export async function PATCH(request) {
       paid,
       paidAt: paid ? serverTimestamp() : null,
     });
+    logFirestoreWrite(1, { endpoint: '/api/payment', document: 'ticket', method: 'PATCH' });
 
     return NextResponse.json({ id, dateKey, paid }, { status: 200 });
   } catch (err) {

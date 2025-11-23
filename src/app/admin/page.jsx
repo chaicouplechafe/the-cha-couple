@@ -153,6 +153,7 @@ function AdminDashboard() {
   const [inventoryLoaded, setInventoryLoaded] = useState(false);
   const [settingsError, setSettingsError] = useState("");
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [inventorySaving, setInventorySaving] = useState(false);
 
   const [clearing, setClearing] = useState(false);
   const [paidUpdating, setPaidUpdating] = useState({});
@@ -164,6 +165,7 @@ function AdminDashboard() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [ticketToDelete, setTicketToDelete] = useState(null);
   const [deleteError, setDeleteError] = useState("");
+  const [viewingTicket, setViewingTicket] = useState(null);
   const [orderDetailsDialogOpen, setOrderDetailsDialogOpen] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState(null);
 
@@ -425,7 +427,7 @@ function AdminDashboard() {
     }
   }
 
-  function openEditDialog(ticket) {
+  async function openEditDialog(ticket) {
     const items = Array.isArray(ticket.items) ? ticket.items : [];
     const chaiItem = items.find((item) => item.name === "Special Chai" || item.name === "Irani Chai");
     const bunItem = items.find((item) => item.name === "Bun");
@@ -438,11 +440,26 @@ function AdminDashboard() {
     // Store a stable reference to the ticket
     setEditingTicket({ ...ticket, id: ticket.id, dateKey: ticket.dateKey });
     setEditError("");
+    
+    // Refresh inventory to ensure we have the latest values
+    try {
+      const res = await fetch("/api/settings");
+      if (res.ok) {
+        const json = await res.json();
+        setInventory({
+          chai: json.inventory?.chai ?? 0,
+          bun: json.inventory?.bun ?? 0,
+          tiramisu: json.inventory?.tiramisu ?? 0,
+        });
+      }
+    } catch {
+      // Ignore errors, stream will update it
+    }
   }
 
   function cancelEdit() {
     setEditingTicket(null);
-    setEditQuantities({ chai: 0, bun: 0, tiramisu: 0 });
+//    setEditQuantities({ chai: 0, bun: 0, tiramisu: 0 });
     setEditError("");
   }
 
@@ -648,7 +665,7 @@ function AdminDashboard() {
   async function saveInventory(event) {
     event.preventDefault();
     setSettingsError("");
-    setSettingsSaving(true);
+    setInventorySaving(true);
     try {
       const res = await fetch("/api/settings", {
         method: "POST",
@@ -661,17 +678,39 @@ function AdminDashboard() {
       const json = await res.json();
       if (!res.ok) {
         setSettingsError(json.error || "Failed to save inventory");
-        setSettingsSaving(false);
+        setInventorySaving(false);
         return;
       }
       setInventory(json.inventory || { chai: 0, bun: 0, tiramisu: 0 });
       setBuffer(json.buffer || { chai: 10, bun: 10, tiramisu: 10 });
-      setSettingsSaving(false);
+      setInventorySaving(false);
     } catch {
       setSettingsError("Failed to save inventory");
-      setSettingsSaving(false);
+      setInventorySaving(false);
     }
   }
+
+  // Calculate available inventory for edit modal (current inventory + items in the order being edited)
+  const editAvailability = useMemo(() => {
+    if (!editingTicket) {
+      return { chai: 0, bun: 0, tiramisu: 0 };
+    }
+    // Ensure inventory is an object with numeric values
+    const currentInventory = inventory || { chai: 0, bun: 0, tiramisu: 0 };
+    const currentChaiQty = Number(editingTicket.items?.find((item) => item.name === "Special Chai" || item.name === "Irani Chai")?.qty || 0);
+    const currentBunQty = Number(editingTicket.items?.find((item) => item.name === "Bun")?.qty || 0);
+    const currentTiramisuQty = Number(editingTicket.items?.find((item) => item.name === "Tiramisu")?.qty || 0);
+    
+    const chaiInv = Number(currentInventory.chai) || 0;
+    const bunInv = Number(currentInventory.bun) || 0;
+    const tiramisuInv = Number(currentInventory.tiramisu) || 0;
+    
+    return {
+      chai: chaiInv + currentChaiQty,
+      bun: bunInv + currentBunQty,
+      tiramisu: tiramisuInv + currentTiramisuQty,
+    };
+  }, [editingTicket, inventory]);
 
   const queueTicketsWaiting = useMemo(
     () =>
@@ -905,111 +944,90 @@ function AdminDashboard() {
                 </DialogHeader>
                 <div className="space-y-4 py-4">
                   <div className="space-y-3">
-                    {(() => {
-                      // Calculate available inventory: current inventory + items already in this order
-                      // When we save, we'll restore the current order's items first, then deduct new quantities
-                      const currentChaiQty = editingTicket?.items?.find((item) => item.name === "Special Chai" || item.name === "Irani Chai")?.qty || 0;
-                      const currentBunQty = editingTicket?.items?.find((item) => item.name === "Bun")?.qty || 0;
-                      const currentTiramisuQty = editingTicket?.items?.find((item) => item.name === "Tiramisu")?.qty || 0;
-                      const availableChai = (inventory?.chai ?? 0) + currentChaiQty;
-                      const availableBun = (inventory?.bun ?? 0) + currentBunQty;
-                      const availableTiramisu = (inventory?.tiramisu ?? 0) + currentTiramisuQty;
-                      
-                      return (
-                        <>
-                          <div className="flex items-center justify-between rounded-2xl border bg-card px-4 py-3">
-                            <div>
-                              <p className="font-medium">Special Chai</p>
-                              <p className="text-sm text-muted-foreground">
-                                Available: {availableChai}
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="icon"
-                                onClick={() => updateEditQuantity("chai", -1)}
-                                disabled={editQuantities.chai === 0}
-                              >
-                                <Minus className="h-4 w-4" />
-                              </Button>
-                              <span className="w-8 text-center text-lg font-semibold">
-                                {editQuantities.chai}
-                              </span>
-                              <Button
-                                type="button"
-                                size="icon"
-                                onClick={() => updateEditQuantity("chai", 1)}
-                                disabled={editQuantities.chai >= availableChai}
-                              >
-                                <Plus className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </div>
-                          <div className="flex items-center justify-between rounded-2xl border bg-card px-4 py-3">
-                            <div>
-                              <p className="font-medium">Bun</p>
-                              <p className="text-sm text-muted-foreground">
-                                Available: {availableBun}
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="icon"
-                                onClick={() => updateEditQuantity("bun", -1)}
-                                disabled={editQuantities.bun === 0}
-                              >
-                                <Minus className="h-4 w-4" />
-                              </Button>
-                              <span className="w-8 text-center text-lg font-semibold">
-                                {editQuantities.bun}
-                              </span>
-                              <Button
-                                type="button"
-                                size="icon"
-                                onClick={() => updateEditQuantity("bun", 1)}
-                                disabled={editQuantities.bun >= availableBun}
-                              >
-                                <Plus className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </div>
-                          <div className="flex items-center justify-between rounded-2xl border bg-card px-4 py-3">
-                            <div>
-                              <p className="font-medium">Tiramisu</p>
-                              <p className="text-sm text-muted-foreground">
-                                Available: {availableTiramisu}
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="icon"
-                                onClick={() => updateEditQuantity("tiramisu", -1)}
-                                disabled={editQuantities.tiramisu === 0}
-                              >
-                                <Minus className="h-4 w-4" />
-                              </Button>
-                              <span className="w-8 text-center text-lg font-semibold">
-                                {editQuantities.tiramisu}
-                              </span>
-                              <Button
-                                type="button"
-                                size="icon"
-                                onClick={() => updateEditQuantity("tiramisu", 1)}
-                                disabled={editQuantities.tiramisu >= availableTiramisu}
-                              >
-                                <Plus className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </div>
-                        </>
-                      );
-                    })()}
+                    <div className="flex items-center justify-between rounded-2xl border bg-card px-4 py-3">
+                      <div>
+                        <p className="font-medium">Special Chai </p>
+                        <p className="text-xs text-muted-foreground">Available: {editAvailability.chai}</p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => updateEditQuantity("chai", -1)}
+                          disabled={editQuantities.chai === 0}
+                        >
+                          <Minus className="h-4 w-4" />
+                        </Button>
+                        <span className="w-8 text-center text-lg font-semibold">
+                          {editQuantities.chai}
+                        </span>
+                        <Button
+                          type="button"
+                          size="icon"
+                          onClick={() => updateEditQuantity("chai", 1)}
+                          disabled={editQuantities.chai >= editAvailability.chai}
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between rounded-2xl border bg-card px-4 py-3">
+                      <div>
+                        <p className="font-medium">Bun</p>
+                        <p className="text-xs text-muted-foreground">Available: {editAvailability.bun}</p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => updateEditQuantity("bun", -1)}
+                          disabled={editQuantities.bun === 0}
+                        >
+                          <Minus className="h-4 w-4" />
+                        </Button>
+                        <span className="w-8 text-center text-lg font-semibold">
+                          {editQuantities.bun}
+                        </span>
+                        <Button
+                          type="button"
+                          size="icon"
+                          onClick={() => updateEditQuantity("bun", 1)}
+                          disabled={editQuantities.bun >= editAvailability.bun}
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between rounded-2xl border bg-card px-4 py-3">
+                      <div>
+                        <p className="font-medium">Tiramisu</p>
+                        <p className="text-xs text-muted-foreground">Available: {editAvailability.tiramisu}</p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => updateEditQuantity("tiramisu", -1)}
+                          disabled={editQuantities.tiramisu === 0}
+                        >
+                          <Minus className="h-4 w-4" />
+                        </Button>
+                        <span className="w-8 text-center text-lg font-semibold">
+                          {editQuantities.tiramisu}
+                        </span>
+                        <Button
+                          type="button"
+                          size="icon"
+                          onClick={() => updateEditQuantity("tiramisu", 1)}
+                          disabled={editQuantities.tiramisu >= editAvailability.tiramisu}
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <DialogFooter>
@@ -1243,7 +1261,11 @@ function AdminDashboard() {
                     </TableHeader>
                     <TableBody>
                       {readyTickets.map((ticket) => (
-                        <TableRow key={ticket.id}>
+                        <TableRow 
+                          key={ticket.id}
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => setViewingTicket(ticket)}
+                        >
                           <TableCell className="font-medium">
                             {ticket.basePosition}
                           </TableCell>
@@ -1260,9 +1282,10 @@ function AdminDashboard() {
                                   ? "bg-green-600 text-white hover:bg-green-600/90"
                                   : undefined
                               }
-                              onClick={() =>
-                                updatePaid(ticket.id, ticket.dateKey, !ticket.paid)
-                              }
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                updatePaid(ticket.id, ticket.dateKey, !ticket.paid);
+                              }}
                               disabled={Boolean(paidUpdating[ticket.id])}
                             >
                               {paidUpdating[ticket.id]
@@ -1282,6 +1305,107 @@ function AdminDashboard() {
                 )}
               </CardContent>
             </Card>
+
+            {/* View Served Ticket Dialog */}
+            <Dialog open={viewingTicket !== null} onOpenChange={(open) => !open && setViewingTicket(null)}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Order Details</DialogTitle>
+                  <DialogDescription>
+                    View order information and payment status
+                  </DialogDescription>
+                </DialogHeader>
+                {viewingTicket && (
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-sm font-medium text-muted-foreground">Token:</span>
+                        <span className="text-sm font-semibold">{viewingTicket.basePosition}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm font-medium text-muted-foreground">Name:</span>
+                        <span className="text-sm font-semibold">{viewingTicket.name}</span>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium text-muted-foreground">Order:</p>
+                      <div className="rounded-lg border bg-card p-3">
+                        {Array.isArray(viewingTicket.items) && viewingTicket.items.length > 0 ? (
+                          <div className="space-y-2">
+                            {viewingTicket.items
+                              .filter((item) => item.qty > 0)
+                              .map((item, index) => (
+                                <div key={index} className="flex justify-between text-sm">
+                                  <span>{item.name}</span>
+                                  <span className="font-medium">× {item.qty}</span>
+                                </div>
+                              ))}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">No items</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex justify-between border-t pt-4">
+                      <span className="text-base font-semibold">Total:</span>
+                      <span className="text-base font-bold">
+                        {currency.format(ticketTotal(viewingTicket, Number(chaiPrice) || 0, Number(bunPrice) || 0, Number(tiramisuPrice) || 0))}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between border-t pt-4">
+                      <span className="text-sm font-medium text-muted-foreground">Payment Status:</span>
+                      <Badge 
+                        variant={viewingTicket.paid ? "default" : "outline"}
+                        className={viewingTicket.paid ? "bg-green-600 text-white" : undefined}
+                      >
+                        {viewingTicket.paid ? "Paid" : "Unpaid"}
+                      </Badge>
+                    </div>
+                  </div>
+                )}
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setViewingTicket(null)}
+                  >
+                    Close
+                  </Button>
+                  {viewingTicket && (
+                    <Button
+                      variant={viewingTicket.paid ? "outline" : "default"}
+                      className={
+                        viewingTicket.paid
+                          ? undefined
+                          : "bg-green-600 text-white hover:bg-green-600/90"
+                      }
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (viewingTicket && !paidUpdating[viewingTicket.id]) {
+                          const newPaidStatus = !viewingTicket.paid;
+                          // Optimistically update the local state
+                          setViewingTicket({ ...viewingTicket, paid: newPaidStatus });
+                          // Update in the dashboard tickets list
+                          setDashboardTickets((prev) =>
+                            prev.map((t) =>
+                              t.id === viewingTicket.id ? { ...t, paid: newPaidStatus } : t
+                            )
+                          );
+                          // Call the API
+                          await updatePaid(viewingTicket.id, viewingTicket.dateKey, newPaidStatus);
+                        }
+                      }}
+                      disabled={Boolean(viewingTicket && paidUpdating[viewingTicket.id])}
+                    >
+                      {viewingTicket && paidUpdating[viewingTicket.id]
+                        ? "Saving..."
+                        : viewingTicket?.paid
+                        ? "Mark as Unpaid"
+                        : "Mark as Paid"}
+                    </Button>
+                  )}
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </TabsContent>
 
           <TabsContent value="settings" className="space-y-6">
@@ -1417,8 +1541,8 @@ function AdminDashboard() {
                     </div>
                   </div>
                   <div className="md:col-span-2">
-                    <Button type="submit" disabled={settingsSaving}>
-                      {settingsSaving ? "Saving..." : "Save inventory settings"}
+                    <Button type="submit" disabled={inventorySaving}>
+                      {inventorySaving ? "Saving..." : "Save inventory settings"}
                     </Button>
                   </div>
                 </form>
@@ -1527,4 +1651,5 @@ function ticketTotal(ticket, fallbackChai = 0, fallbackBun = 0, fallbackTiramisu
     return sum + (price || 0) * (item.qty || 0);
   }, 0);
 }
+
 

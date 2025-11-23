@@ -3,7 +3,7 @@ config:
   phases:
     - duration: 10
       arrivalRate: 10  # 10 requests per second
-      maxVusers: 50
+      maxVusers: 200
   processor: "./artillery-processor.js"
 scenarios:
   - name: "Join Queue"

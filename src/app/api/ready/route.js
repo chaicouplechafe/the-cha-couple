@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db, firestoreHelpers } from "@/lib/firebase";
 import { ITEM_NAMES, isChai, isBun, isTiramisu } from "@/lib/item-names";
+import { logFirestoreRead, logFirestoreWrite } from "@/lib/firebase-monitor";
 
 const { doc, collection, getDoc, setDoc, serverTimestamp } = firestoreHelpers;
 
@@ -28,6 +29,7 @@ export async function PATCH(request) {
     const dayRef = doc(db, "queues", dateKey);
     const ticketRef = doc(collection(dayRef, "tickets"), id);
     const ticketSnap = await getDoc(ticketRef);
+    logFirestoreRead(1, { endpoint: '/api/ready', document: 'ticket', method: 'PATCH' });
 
     if (!ticketSnap.exists()) {
       return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
@@ -38,6 +40,7 @@ export async function PATCH(request) {
 
     const pricingRef = doc(db, "config", "pricing");
     const pricingSnap = await getDoc(pricingRef);
+    logFirestoreRead(1, { endpoint: '/api/ready', document: 'pricing', method: 'PATCH' });
     const pricingData = pricingSnap.exists()
       ? pricingSnap.data()
       : { chaiPrice: 0, bunPrice: 0, tiramisuPrice: 0 };
@@ -68,6 +71,7 @@ export async function PATCH(request) {
       },
       { merge: true }
     );
+    logFirestoreWrite(1, { endpoint: '/api/ready', document: 'ticket', method: 'PATCH' });
 
     return NextResponse.json({ id, dateKey, status }, { status: 200 });
   } catch (err) {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db, getTodayKey, firestoreHelpers } from "@/lib/firebase";
 import { isChai, isBun, isTiramisu } from "@/lib/item-names";
+import { logFirestoreRead, logFirestoreWrite, logFirestoreDelete } from "@/lib/firebase-monitor";
 
 const {
   doc,
@@ -26,6 +27,10 @@ export async function GET(request) {
 
     const q = query(ticketsCol, orderBy("basePosition", "asc"));
     const snapshot = await getDocs(q);
+    
+    // Each document in snapshot counts as a read
+    const readCount = snapshot.size;
+    logFirestoreRead(readCount, { endpoint: '/api/queue', document: 'tickets', method: 'GET' });
 
     const tickets = [];
     snapshot.forEach((docSnap) => {
@@ -51,6 +56,8 @@ export async function DELETE() {
 
     // First, get all tickets to calculate restore amounts
     const snapshot = await getDocs(ticketsCol);
+    const initialReadCount = snapshot.size;
+    logFirestoreRead(initialReadCount, { endpoint: '/api/queue', document: 'tickets', method: 'DELETE' });
     
     let totalChaiRestore = 0;
     let totalBunRestore = 0;
@@ -81,9 +88,11 @@ export async function DELETE() {
       await runTransaction(db, async (tx) => {
         // Read settings
         const settingsSnap = await tx.get(settingsRef);
+        logFirestoreRead(1, { endpoint: '/api/queue', document: 'settings', method: 'DELETE' });
         if (!settingsSnap.exists()) {
           // If settings don't exist, just delete tickets
           ticketRefsToDelete.forEach(ref => tx.delete(ref));
+          logFirestoreDelete(ticketRefsToDelete.length, { endpoint: '/api/queue', document: 'tickets', method: 'DELETE' });
           return;
         }
 
@@ -92,6 +101,7 @@ export async function DELETE() {
 
         // Delete all tickets
         ticketRefsToDelete.forEach(ref => tx.delete(ref));
+        logFirestoreDelete(ticketRefsToDelete.length, { endpoint: '/api/queue', document: 'tickets', method: 'DELETE' });
 
         // Restore inventory atomically
         tx.update(settingsRef, {
@@ -100,6 +110,7 @@ export async function DELETE() {
           "inventory.tiramisu": (currentInventory.tiramisu || 0) + totalTiramisuRestore,
           updatedAt: serverTimestamp(),
         });
+        logFirestoreWrite(1, { endpoint: '/api/queue', document: 'settings', method: 'DELETE' });
       });
     }
 
