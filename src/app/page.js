@@ -94,7 +94,7 @@ export default function Home() {
       </div>
       <footer className="mt-12 text-center text-sm text-muted-foreground">
   Developed by{" "}
-  <a href="https://devuo.in" target="_blank" rel="noreferrer" className="underline">
+  <a href="https://devou.in" target="_blank" rel="noreferrer" className="underline">
     devou
   </a>
 </footer>

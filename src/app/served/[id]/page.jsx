@@ -250,7 +250,7 @@ export default function ServedPage() {
               </Link>
             </Button>
             <Button asChild variant="outline" size="lg">
-              <Link href="/">Back to home</Link>
+              <Link href="/queue">Back to home</Link>
             </Button>
           </CardFooter>
         </Card>

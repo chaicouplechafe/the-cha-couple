@@ -863,7 +863,8 @@ function AdminDashboard() {
                     No one is waiting right now.
                   </p>
                 ) : (
-                  <Table>
+                  <div className="overflow-x-auto">
+                    <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Queue #</TableHead>
@@ -928,7 +929,8 @@ function AdminDashboard() {
                         </TableRow>
                       ))}
                     </TableBody>
-                  </Table>
+                    </Table>
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -1063,9 +1065,9 @@ function AdminDashboard() {
                 {ticketToDelete && (
                   <div className="mt-2 rounded-md bg-muted p-3">
                     <p className="font-medium">{ticketToDelete.name}</p>
-                    <p className="text-sm text-muted-foreground">
+                    <div className="text-sm text-muted-foreground">
                       {formatOrder(ticketToDelete.items)}
-                    </p>
+                    </div>
                   </div>
                 )}
                 {deleteError && (
@@ -1249,7 +1251,8 @@ function AdminDashboard() {
                     No ready tickets for {dashboardDate}.
                   </p>
                 ) : (
-                  <Table>
+                  <div className="overflow-x-auto">
+                    <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Token</TableHead>
@@ -1301,7 +1304,8 @@ function AdminDashboard() {
                         </TableRow>
                       ))}
                     </TableBody>
-                  </Table>
+                    </Table>
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -1628,11 +1632,39 @@ function LoaderCard() {
   );
 }
 
+const ITEM_CODE_STYLES = {
+  C: "bg-amber-100 text-amber-900",
+  B: "bg-orange-100 text-orange-900",
+  T: "bg-rose-100 text-rose-900",
+};
+
+function getItemCode(name = "") {
+  if (name.toLowerCase().includes("tiramisu")) return "T";
+  if (name.toLowerCase().includes("bun")) return "B";
+  return "C";
+}
+
 function formatOrder(items) {
-  if (!Array.isArray(items)) return "—";
+  if (!Array.isArray(items)) return <span>—</span>;
   const filtered = items.filter((item) => item.qty > 0);
-  if (filtered.length === 0) return "—";
-  return filtered.map((item) => `${item.name} × ${item.qty}`).join(", ");
+  if (filtered.length === 0) return <span>—</span>;
+
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {filtered.map((item, index) => {
+        const code = getItemCode(item.name);
+        return (
+          <span
+            key={`${code}-${index}`}
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold whitespace-nowrap ${ITEM_CODE_STYLES[code] || "bg-muted text-foreground"}`}
+          >
+            <span className="uppercase">{code}</span>
+            <span className="font-bold">- {item.qty}</span>
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 function ticketTotal(ticket, fallbackChai = 0, fallbackBun = 0, fallbackTiramisu = 0) {

@@ -129,6 +129,7 @@ export default function QueuePage() {
     source.onerror = () => {
       // Don't set loading to false on error - keep trying
       // Only set error state, but don't show badges until we have actual settings
+      
     };
     
     return () => {
