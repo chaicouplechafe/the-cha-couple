@@ -19,6 +19,14 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 const currency = new Intl.NumberFormat("en-IN", {
   style: "currency",
@@ -35,17 +43,7 @@ export default function StatusPage() {
   const [pricing, setPricing] = useState({ chaiPrice: 0, bunPrice: 0, tiramisuPrice: 0 });
   const [streamSettings, setStreamSettings] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState("connecting"); // "connected", "disconnected", "error", "connecting"
-
-  useEffect(() => {
-    if (!id || typeof window === "undefined") return;
-    const stored = window.localStorage.getItem("queueTicket");
-    if (!stored) {
-      window.localStorage.setItem(
-        "queueTicket",
-        JSON.stringify({ id, dateKey: getTodayKey() })
-      );
-    }
-  }, [id]);
+  const [exitDialogOpen, setExitDialogOpen] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -144,6 +142,77 @@ export default function StatusPage() {
   }, [id]);
 
   useEffect(() => {
+    if (!id) return;
+
+    // Ensure ticket is stored locally for resume flow
+    if (typeof window !== "undefined") {
+      const stored = window.localStorage.getItem("queueTicket");
+      if (!stored) {
+        window.localStorage.setItem(
+          "queueTicket",
+          JSON.stringify({ id, dateKey: getTodayKey() })
+        );
+      }
+    }
+
+    let ignore = false;
+
+    async function loadInitialTicket() {
+      try {
+        // Prefer dateKey from localStorage if it matches this id
+        let dateKey = getTodayKey();
+        if (typeof window !== "undefined") {
+          const stored = window.localStorage.getItem("queueTicket");
+          if (stored) {
+            try {
+              const parsed = JSON.parse(stored);
+              if (parsed?.id === id && parsed.dateKey) {
+                dateKey = parsed.dateKey;
+              }
+            } catch {
+              // ignore parse errors
+            }
+          }
+        }
+
+        const res = await fetch(
+          `/api/position?id=${encodeURIComponent(id)}&date=${encodeURIComponent(
+            dateKey
+          )}`
+        );
+
+        if (!res.ok) {
+          // If ticket truly doesn't exist, send user back to queue
+          if (res.status === 404) {
+            if (typeof window !== "undefined") {
+              window.localStorage.removeItem("queueTicket");
+            }
+            router.replace("/queue");
+          }
+          return;
+        }
+
+        const ticket = await res.json();
+        if (ignore) return;
+
+        setData({
+          ...ticket,
+          dateKey,
+        });
+        setLoading(false);
+      } catch {
+        // If this fails, we still have the stream as a fallback
+      }
+    }
+
+    loadInitialTicket();
+
+    return () => {
+      ignore = true;
+    };
+  }, [id, router]);
+
+  useEffect(() => {
     let ignore = false;
     const cached = getCachedPricing();
     if (cached?.data) {
@@ -203,7 +272,7 @@ export default function StatusPage() {
       window.localStorage.removeItem("queueTicket");
     }
     try {
-      const dateKey = getTodayKey();
+      const dateKey = data?.dateKey || getTodayKey();
       await fetch(
         `/api/ticket?id=${encodeURIComponent(id)}&date=${encodeURIComponent(
           dateKey
@@ -213,6 +282,7 @@ export default function StatusPage() {
     } catch {
       // ignore
     } finally {
+      setExitDialogOpen(false);
       router.replace("/queue");
     }
   }
@@ -400,12 +470,38 @@ export default function StatusPage() {
               <Button
                 variant="outline"
                 className="flex-1"
-                onClick={handleExitQueue}
+                onClick={() => setExitDialogOpen(true)}
               >
                 <LogOut className="mr-2 h-4 w-4" />
                 Exit Queue
               </Button>
             </div>
+            <Dialog open={exitDialogOpen} onOpenChange={setExitDialogOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Exit queue?</DialogTitle>
+                  <DialogDescription>
+                    Your current token will be removed and you&apos;ll lose your place in line.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter className="flex flex-col sm:flex-row gap-2 sm:justify-end">
+                  <Button
+                    variant="outline"
+                    className="w-full sm:w-auto"
+                    onClick={() => setExitDialogOpen(false)}
+                  >
+                    Stay in queue
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    className="w-full sm:w-auto"
+                    onClick={handleExitQueue}
+                  >
+                    Yes, exit queue
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
             {/* <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>Tokens reset nightly.</span>
               <span>Need help? Visit the counter.</span>

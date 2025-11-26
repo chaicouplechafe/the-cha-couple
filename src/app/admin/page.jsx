@@ -165,31 +165,10 @@ function AdminDashboard() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [ticketToDelete, setTicketToDelete] = useState(null);
   const [deleteError, setDeleteError] = useState("");
+  const [clearTodayDialogOpen, setClearTodayDialogOpen] = useState(false);
   const [viewingTicket, setViewingTicket] = useState(null);
   const [orderDetailsDialogOpen, setOrderDetailsDialogOpen] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState(null);
-
-  const loadQueueTickets = useCallback(
-    async ({ silent } = {}) => {
-      try {
-        setQueueError("");
-        if (!silent) setQueueLoading(true);
-        const res = await fetch(`/api/queue?date=${todayKey}`);
-        const json = await res.json();
-        if (!res.ok) {
-          setQueueError(json.error || "Failed to load queue");
-          setQueueLoading(false);
-          return;
-        }
-        setQueueTickets(json.tickets || []);
-        setQueueLoading(false);
-      } catch {
-        setQueueError("Failed to load queue");
-        setQueueLoading(false);
-      }
-    },
-    [todayKey]
-  );
 
   const loadDashboardTickets = useCallback(
     async (dateKey = dashboardDate, { silent } = {}) => {
@@ -212,10 +191,6 @@ function AdminDashboard() {
     },
     [dashboardDate]
   );
-
-  useEffect(() => {
-    loadQueueTickets();
-  }, [loadQueueTickets]);
 
   useEffect(() => {
     if (tab !== "queue") return;
@@ -599,6 +574,7 @@ function AdminDashboard() {
       console.error("Error clearing queue:", err);
     } finally {
       setClearing(false);
+      setClearTodayDialogOpen(false);
     }
   }
 
@@ -850,7 +826,11 @@ function AdminDashboard() {
                   <Badge variant="secondary">
                     {queueTicketsWaiting.length} waiting
                   </Badge>
-                  <Button variant="outline" onClick={clearToday} disabled={clearing}>
+                  <Button
+                    variant="outline"
+                    onClick={() => setClearTodayDialogOpen(true)}
+                    disabled={clearing}
+                  >
                     {clearing ? "Clearing..." : "Clear Today"}
                   </Button>
                 </div>
@@ -934,6 +914,45 @@ function AdminDashboard() {
                 )}
               </CardContent>
             </Card>
+
+            <Dialog
+              open={clearTodayDialogOpen}
+              onOpenChange={(open) => {
+                if (!open && !clearing) {
+                  setClearTodayDialogOpen(false);
+                }
+              }}
+            >
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Clear today&apos;s queue?</DialogTitle>
+                  <DialogDescription>
+                    This will remove all waiting tickets for today and restore their inventory. This action
+                    cannot be undone.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter className="flex flex-col sm:flex-row gap-2 sm:justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full sm:w-auto"
+                    onClick={() => setClearTodayDialogOpen(false)}
+                    disabled={clearing}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="w-full sm:w-auto"
+                    onClick={clearToday}
+                    disabled={clearing}
+                  >
+                    {clearing ? "Clearing..." : "Yes, clear today"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
 
             {/* Edit Order Dialog */}
             <Dialog open={editingTicket !== null} onOpenChange={(open) => !open && cancelEdit()}>
