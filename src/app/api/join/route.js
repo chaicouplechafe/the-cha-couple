@@ -10,6 +10,9 @@ const {
   setDoc,
   updateDoc,
   getDoc,
+  getDocs,
+  query,
+  where,
   serverTimestamp,
 } = firestoreHelpers;
 
@@ -18,6 +21,9 @@ export async function POST(request) {
     const body = await request.json();
     const name = (body.name || "").trim();
     const items = Array.isArray(body.items) ? body.items : [];
+    
+    // Get idempotency key from headers
+    const idempotencyKey = request.headers.get("X-Idempotency-Key");
 
     if (!name) {
       return NextResponse.json(
@@ -37,6 +43,37 @@ export async function POST(request) {
     const dateKey = getTodayKey();
     const dayRef = doc(db, "queues", dateKey);
     const settingsRef = doc(db, "config", "app-settings");
+
+    // Check if a ticket with this idempotency key already exists
+    if (idempotencyKey) {
+      try {
+        const ticketsCol = collection(dayRef, "tickets");
+        const existingQuery = query(ticketsCol, where("idempotencyKey", "==", idempotencyKey));
+        const existingSnapshot = await getDocs(existingQuery);
+        
+        if (!existingSnapshot.empty) {
+          // Check if the existing ticket is still in "waiting" status
+          const existingTicket = existingSnapshot.docs[0];
+          const ticketData = existingTicket.data();
+          
+          // Only return existing ticket if it's still waiting
+          if (ticketData.status === "waiting") {
+            return NextResponse.json({
+              id: existingTicket.id,
+              position: ticketData.basePosition,
+              dateKey: ticketData.dateKey,
+              items: ticketData.items,
+              existing: true // Flag to indicate this is an existing ticket
+            }, { status: 200 });
+          }
+          // If ticket is not waiting (ready, served, etc.), allow creating a new ticket
+          // The old idempotency key is essentially expired
+        }
+      } catch (err) {
+        console.error("Error checking idempotency key:", err);
+        // Continue to create new ticket if check fails
+      }
+    }
 
     // Calculate inventory changes
     let chaiDecrement = 0;
@@ -101,6 +138,7 @@ export async function POST(request) {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         dateKey,
+        idempotencyKey: idempotencyKey || null, // Store the idempotency key
       };
       tx.set(ticketRef, ticket);
      // logFirestoreWrite(1, { endpoint: '/api/join', document: 'ticket' });

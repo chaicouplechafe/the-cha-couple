@@ -22,6 +22,17 @@ export default function RootLayout({ children }) {
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.variable} bg-background text-foreground antialiased`}>
         {children}
+        <footer className="w-full py-4 text-center text-sm text-muted-foreground">
+          Developed by{" "}
+          <a
+            href="https://devou.in"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-foreground hover:underline"
+          >
+            devou
+          </a>
+        </footer>
       </body>
     </html>
   );

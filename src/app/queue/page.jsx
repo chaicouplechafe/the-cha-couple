@@ -58,6 +58,11 @@ export default function QueuePage() {
     }
   }, [router]);
 
+  // Generate idempotency key for preventing duplicate submissions
+  function generateIdempotencyKey() {
+    return `idem_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+  }
+
   useEffect(() => {
     let ignore = false;
     const cached = getCachedPricing();
@@ -203,10 +208,23 @@ export default function QueuePage() {
     setSubmitting(true);
     setError("");
     try {
+      // Get or generate idempotency key
+      let idempotencyKey;
+      if (typeof window !== "undefined") {
+        idempotencyKey = window.localStorage.getItem("idempotencyKey");
+        if (!idempotencyKey) {
+          idempotencyKey = generateIdempotencyKey();
+          window.localStorage.setItem("idempotencyKey", idempotencyKey);
+        }
+      }
+
       const items = orderItems.map(({ name, qty }) => ({ name, qty }));
       const res = await fetch("/api/join", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "X-Idempotency-Key": idempotencyKey || ""
+        },
         body: JSON.stringify({ name: name.trim(), items }),
       });
       const data = await res.json();

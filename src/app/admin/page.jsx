@@ -17,7 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Minus, Plus, Edit, Trash2, Loader2, RotateCw } from "lucide-react";
+import { Minus, Plus, Edit, Trash2, Loader2, RotateCw, UserPlus } from "lucide-react";
 
 const currency = new Intl.NumberFormat("en-IN", {
   style: "currency",
@@ -906,16 +906,20 @@ function AdminDashboard() {
                   </Badge>
                   <Button
                     variant="default"
+                    size="icon"
                     onClick={openAddUserDialog}
+                    title="Add User"
                   >
-                    Add User
+                    <UserPlus className="h-4 w-4" />
                   </Button>
                   <Button
                     variant="outline"
+                    size="icon"
                     onClick={() => setClearTodayDialogOpen(true)}
                     disabled={clearing}
+                    title={clearing ? "Clearing..." : "Clear Today"}
                   >
-                    {clearing ? "Clearing..." : "Clear Today"}
+                    {clearing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                   </Button>
                 </div>
               </CardHeader>

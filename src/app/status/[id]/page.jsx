@@ -82,6 +82,7 @@ export default function StatusPage() {
               // Ticket was removed or doesn't exist anymore - redirect to queue
               if (typeof window !== "undefined") {
                 window.localStorage.removeItem("queueTicket");
+                window.localStorage.removeItem("idempotencyKey"); // Clear idempotency key
               }
               // Redirect to queue page
               router.replace("/queue");
@@ -186,6 +187,7 @@ export default function StatusPage() {
           if (res.status === 404) {
             if (typeof window !== "undefined") {
               window.localStorage.removeItem("queueTicket");
+              window.localStorage.removeItem("idempotencyKey"); // Clear idempotency key
             }
             router.replace("/queue");
           }
@@ -270,6 +272,7 @@ export default function StatusPage() {
   async function handleExitQueue() {
     if (typeof window !== "undefined") {
       window.localStorage.removeItem("queueTicket");
+      window.localStorage.removeItem("idempotencyKey"); // Clear idempotency key
     }
     try {
       const dateKey = data?.dateKey || getTodayKey();
@@ -305,6 +308,7 @@ export default function StatusPage() {
     if (status !== "ready") return;
     if (typeof window !== "undefined") {
       window.localStorage.removeItem("queueTicket");
+      window.localStorage.removeItem("idempotencyKey"); // Clear idempotency key when order is ready
     }
     router.replace(`/served/${id}`);
   }, [status, router, id]);
